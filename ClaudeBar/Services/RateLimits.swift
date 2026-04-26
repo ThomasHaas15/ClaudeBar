@@ -80,9 +80,7 @@ struct RateLimits: Decodable, Equatable {
 @Observable
 final class RateLimitsStore {
     private(set) var limits: RateLimits?
-    private(set) var todayWeeklyDelta: Double?
     @ObservationIgnored private var observer: NSObjectProtocol?
-    @ObservationIgnored private let weeklyTracker = WeeklyDeltaTracker()
 
     init() {
         reload()
@@ -97,11 +95,5 @@ final class RateLimitsStore {
 
     func reload() {
         limits = RateLimits.load()
-        if let weekly = limits?.sevenDay {
-            weeklyTracker.ingest(currentPercent: weekly.usedPercentage)
-            todayWeeklyDelta = weeklyTracker.deltaPercent(currentPercent: weekly.usedPercentage)
-        } else {
-            todayWeeklyDelta = nil
-        }
     }
 }

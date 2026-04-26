@@ -117,7 +117,7 @@ xcodebuild -project ClaudeBar.xcodeproj -scheme ClaudeBar -configuration Debug t
 
 - `ClaudeBar/ClaudeBarApp.swift` — app entry, `MenuBarExtra` wiring
 - `ClaudeBar/Views/` — popover, header, tab bar, four tab views, reusable components
-- `ClaudeBar/Services/` — file readers (`StatsCache`, `RateLimits`, `Sessions`), `ClaudeFileWatcher`, `StatuslineInstaller`, `ThresholdTracker`, `NotificationCoordinator`, `LiveStats`, `WeeklyDelta`
+- `ClaudeBar/Services/` — file readers (`StatsCache`, `RateLimits`, `Sessions`), `ClaudeFileWatcher`, `StatuslineInstaller`, `ThresholdTracker`, `NotificationCoordinator`, `LiveStats`
 - `ClaudeBar/DesignSystem/` — `Theme`, `ViewModifiers`
 
 ## License

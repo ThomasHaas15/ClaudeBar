@@ -7,9 +7,9 @@ final class NotificationCoordinator {
     @ObservationIgnored private let tracker = ThresholdTracker()
     @ObservationIgnored private var previous: RateLimits?
     @ObservationIgnored private var observer: NSObjectProtocol?
+    @ObservationIgnored private var authRequested = false
 
     init() {
-        requestAuthorization()
         previous = RateLimits.load()
         observer = NotificationCenter.default.addObserver(
             forName: ClaudeFileWatcher.rateLimitsChanged,
@@ -20,9 +20,10 @@ final class NotificationCoordinator {
         }
     }
 
-    private func requestAuthorization() {
-        let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    private func requestAuthorizationIfNeeded() {
+        guard !authRequested else { return }
+        authRequested = true
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     private func evaluate() {
@@ -33,6 +34,7 @@ final class NotificationCoordinator {
     }
 
     private func fire(_ event: ThresholdEvent) {
+        requestAuthorizationIfNeeded()
         let content = UNMutableNotificationContent()
         switch event.level {
         case .critical:

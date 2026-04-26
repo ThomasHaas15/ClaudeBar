@@ -1,0 +1,63 @@
+name: ClaudeBar
+options:
+  bundleIdPrefix: com.thomashaas
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Automatic
+    DEAD_CODE_STRIPPING: YES
+    COMBINE_HIDPI_IMAGES: YES
+targets:
+  ClaudeBar:
+    type: application
+    platform: macOS
+    sources:
+      - path: ClaudeBar
+    info:
+      path: ClaudeBar/Info.plist
+      properties:
+        LSUIElement: true
+        CFBundleDisplayName: ClaudeBar
+        CFBundleName: ClaudeBar
+        NSHumanReadableCopyright: "© 2026 Thomas Haas"
+        NSSupportsAutomaticTermination: true
+        NSSupportsSuddenTermination: true
+    entitlements:
+      path: ClaudeBar/ClaudeBar.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thomashaas.claudebar
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: NO
+  ClaudeBarTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: ClaudeBarTests
+    dependencies:
+      - target: ClaudeBar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thomashaas.claudebar.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  ClaudeBar:
+    build:
+      targets:
+        ClaudeBar: all
+        ClaudeBarTests: [test]
+    test:
+      targets:
+        - ClaudeBarTests

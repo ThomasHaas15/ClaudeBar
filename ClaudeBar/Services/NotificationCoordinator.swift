@@ -1,6 +1,7 @@
 import Foundation
 import UserNotifications
 
+@MainActor
 @Observable
 final class NotificationCoordinator {
     @ObservationIgnored private let tracker = ThresholdTracker()
@@ -14,11 +15,9 @@ final class NotificationCoordinator {
             forName: ClaudeFileWatcher.rateLimitsChanged,
             object: nil,
             queue: .main
-        ) { [weak self] _ in self?.evaluate() }
-    }
-
-    deinit {
-        if let observer { NotificationCenter.default.removeObserver(observer) }
+        ) { [weak self] _ in
+            Task { @MainActor in self?.evaluate() }
+        }
     }
 
     private func requestAuthorization() {

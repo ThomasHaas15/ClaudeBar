@@ -132,11 +132,12 @@ final class StatsStore {
         let cutoff = cacheMTime()
         Task.detached(priority: .utility) { [weak self] in
             let result = LiveStatsScanner.scan(modifiedAfter: cutoff)
-            await MainActor.run {
-                guard let self else { return }
-                if self.live != result { self.live = result }
-            }
+            await self?.applyLive(result)
         }
+    }
+
+    private func applyLive(_ result: LiveStats) {
+        if live != result { live = result }
     }
 
     private func cacheMTime() -> Date? {

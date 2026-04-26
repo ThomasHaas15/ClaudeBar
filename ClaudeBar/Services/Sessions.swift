@@ -19,6 +19,7 @@ struct ClaudeSession: Decodable, Equatable, Identifiable {
     }
 }
 
+@MainActor
 @Observable
 final class SessionsStore {
     private(set) var sessions: [ClaudeSession] = []
@@ -30,11 +31,9 @@ final class SessionsStore {
             forName: ClaudeFileWatcher.sessionsChanged,
             object: nil,
             queue: .main
-        ) { [weak self] _ in self?.reload() }
-    }
-
-    deinit {
-        if let observer { NotificationCenter.default.removeObserver(observer) }
+        ) { [weak self] _ in
+            Task { @MainActor in self?.reload() }
+        }
     }
 
     func reload() {

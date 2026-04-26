@@ -1,5 +1,6 @@
 import AppKit
 
+@MainActor
 enum ClaudeMark {
     static func image(size: CGFloat = 16) -> NSImage {
         let img = (NSImage(named: "ClaudeMark")?.copy() as? NSImage)

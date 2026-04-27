@@ -41,7 +41,7 @@ struct RateLimitsTests {
         #expect(limits.maxRatio == 0.92)
     }
 
-    @Test func droppingExpiredRemovesPastResets() {
+    @Test func zeroingExpiredZerosPastResets() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let limits = RateLimits(
             fiveHour: .init(usedPercentage: 83, resetsAt: now.addingTimeInterval(-3600)),
@@ -49,12 +49,12 @@ struct RateLimitsTests {
             sevenDayOpus: nil,
             sevenDaySonnet: nil
         )
-        let filtered = limits.droppingExpired(now: now)
-        #expect(filtered.fiveHour == nil)
-        #expect(filtered.sevenDay?.percent == 42)
+        let result = limits.zeroingExpired(now: now)
+        #expect(result.fiveHour?.percent == 0)
+        #expect(result.sevenDay?.percent == 42)
     }
 
-    @Test func droppingExpiredKeepsFutureResets() {
+    @Test func zeroingExpiredKeepsFutureResets() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let limits = RateLimits(
             fiveHour: .init(usedPercentage: 10, resetsAt: now.addingTimeInterval(60)),
@@ -62,10 +62,10 @@ struct RateLimitsTests {
             sevenDayOpus: nil,
             sevenDaySonnet: nil
         )
-        #expect(limits.droppingExpired(now: now).fiveHour?.percent == 10)
+        #expect(limits.zeroingExpired(now: now).fiveHour?.percent == 10)
     }
 
-    @Test func droppingExpiredEmptiesAllPastLimits() {
+    @Test func zeroingExpiredZerosAllPastLimits() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let past = now.addingTimeInterval(-1)
         let limits = RateLimits(
@@ -74,6 +74,11 @@ struct RateLimitsTests {
             sevenDayOpus: .init(usedPercentage: 70, resetsAt: past),
             sevenDaySonnet: .init(usedPercentage: 80, resetsAt: past)
         )
-        #expect(limits.droppingExpired(now: now).hasAny == false)
+        let result = limits.zeroingExpired(now: now)
+        #expect(result.hasAny == true)
+        #expect(result.fiveHour?.percent == 0)
+        #expect(result.sevenDay?.percent == 0)
+        #expect(result.sevenDayOpus?.percent == 0)
+        #expect(result.sevenDaySonnet?.percent == 0)
     }
 }

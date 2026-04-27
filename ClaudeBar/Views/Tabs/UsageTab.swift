@@ -72,6 +72,9 @@ private struct LimitRow: View {
     }
 
     private var resetText: String {
+        guard limit.resetsAt > Date() else {
+            return "after next request"
+        }
         let cal = Calendar.current
         if cal.isDateInToday(limit.resetsAt) || cal.isDateInTomorrow(limit.resetsAt) {
             let tz = TimeZone.current.identifier

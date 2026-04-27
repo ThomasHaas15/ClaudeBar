@@ -1,12 +1,12 @@
 import Foundation
 
-struct RateLimits: Decodable, Equatable {
+struct RateLimits: Codable, Equatable {
     let fiveHour: Limit?
     let sevenDay: Limit?
     let sevenDayOpus: Limit?
     let sevenDaySonnet: Limit?
 
-    struct Limit: Decodable, Equatable {
+    struct Limit: Codable, Equatable {
         let usedPercentage: Double
         let resetsAt: Date
 
@@ -44,6 +44,12 @@ struct RateLimits: Decodable, Equatable {
             }
         }
 
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(usedPercentage, forKey: .usedPercentage)
+            try c.encode(resetsAt.timeIntervalSince1970, forKey: .resetsAt)
+        }
+
         init(usedPercentage: Double, resetsAt: Date) {
             self.usedPercentage = usedPercentage
             self.resetsAt = resetsAt
@@ -72,23 +78,21 @@ struct RateLimits: Decodable, Equatable {
 
     static func load(from url: URL = ClaudePaths.rateLimits) -> RateLimits? {
         guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
-        return (try? JSONDecoder().decode(RateLimits.self, from: data))?.zeroingExpired()
+        return try? JSONDecoder().decode(RateLimits.self, from: data)
     }
 
-    /// The file at ~/.claude/rate-limits.json is only rewritten when Claude Code
-    /// makes a request. If `resets_at` is in the past the window has rolled over
-    /// but no new request has been made yet — show 0 % so the bar is visible and
-    /// correct, keeping the known reset time until the file is refreshed.
-    func zeroingExpired(now: Date = Date()) -> RateLimits {
-        func zeroed(_ l: Limit?) -> Limit? {
-            guard let l else { return nil }
-            return l.resetsAt > now ? l : Limit(usedPercentage: 0, resetsAt: l.resetsAt)
-        }
-        return RateLimits(
-            fiveHour: zeroed(fiveHour),
-            sevenDay: zeroed(sevenDay),
-            sevenDayOpus: zeroed(sevenDayOpus),
-            sevenDaySonnet: zeroed(sevenDaySonnet)
+    /// Fall back to `cache` for any limit the fresh load is missing. Claude Code
+    /// drops a window's key from `~/.claude/rate-limits.json` when it expires
+    /// and only re-adds it on the next request — without this fallback the row
+    /// would disappear during that gap. The view keys "Resets after next
+    /// request" off `resetsAt` being in the past, so a stale cached entry
+    /// renders correctly on its own.
+    func merging(cache: RateLimits?) -> RateLimits {
+        RateLimits(
+            fiveHour:       fiveHour       ?? cache?.fiveHour,
+            sevenDay:       sevenDay       ?? cache?.sevenDay,
+            sevenDayOpus:   sevenDayOpus   ?? cache?.sevenDayOpus,
+            sevenDaySonnet: sevenDaySonnet ?? cache?.sevenDaySonnet
         )
     }
 }
@@ -97,9 +101,13 @@ struct RateLimits: Decodable, Equatable {
 @Observable
 final class RateLimitsStore {
     private(set) var limits: RateLimits?
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let cacheKey = "ClaudeBar.lastKnownRateLimits.v1"
     @ObservationIgnored private var observer: NSObjectProtocol?
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        self.limits = loadCache()
         reload()
         observer = NotificationCenter.default.addObserver(
             forName: ClaudeFileWatcher.rateLimitsChanged,
@@ -111,6 +119,22 @@ final class RateLimitsStore {
     }
 
     func reload() {
-        limits = RateLimits.load()
+        let fresh = RateLimits.load()
+        let merged = fresh?.merging(cache: limits) ?? limits
+        limits = merged
+        saveCache(merged)
+    }
+
+    private func loadCache() -> RateLimits? {
+        guard let data = defaults.data(forKey: cacheKey) else { return nil }
+        return try? JSONDecoder().decode(RateLimits.self, from: data)
+    }
+
+    private func saveCache(_ value: RateLimits?) {
+        guard let value, let data = try? JSONEncoder().encode(value) else {
+            defaults.removeObject(forKey: cacheKey)
+            return
+        }
+        defaults.set(data, forKey: cacheKey)
     }
 }

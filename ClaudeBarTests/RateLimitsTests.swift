@@ -41,44 +41,64 @@ struct RateLimitsTests {
         #expect(limits.maxRatio == 0.92)
     }
 
-    @Test func zeroingExpiredZerosPastResets() {
+    @Test func mergingFallsBackToCacheForMissingKeys() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let limits = RateLimits(
+        let cache = RateLimits(
             fiveHour: .init(usedPercentage: 83, resetsAt: now.addingTimeInterval(-3600)),
             sevenDay: .init(usedPercentage: 42, resetsAt: now.addingTimeInterval(86_400)),
             sevenDayOpus: nil,
             sevenDaySonnet: nil
         )
-        let result = limits.zeroingExpired(now: now)
-        #expect(result.fiveHour?.percent == 0)
-        #expect(result.sevenDay?.percent == 42)
+        let fresh = RateLimits(
+            fiveHour: nil,
+            sevenDay: .init(usedPercentage: 50, resetsAt: now.addingTimeInterval(86_400)),
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        let merged = fresh.merging(cache: cache)
+        #expect(merged.fiveHour?.percent == 83)
+        #expect(merged.fiveHour?.resetsAt == now.addingTimeInterval(-3600))
+        #expect(merged.sevenDay?.percent == 50)
     }
 
-    @Test func zeroingExpiredKeepsFutureResets() {
+    @Test func mergingPrefersFreshWhenPresent() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let limits = RateLimits(
-            fiveHour: .init(usedPercentage: 10, resetsAt: now.addingTimeInterval(60)),
+        let cache = RateLimits(
+            fiveHour: .init(usedPercentage: 90, resetsAt: now.addingTimeInterval(-60)),
             sevenDay: nil,
             sevenDayOpus: nil,
             sevenDaySonnet: nil
         )
-        #expect(limits.zeroingExpired(now: now).fiveHour?.percent == 10)
+        let fresh = RateLimits(
+            fiveHour: .init(usedPercentage: 5, resetsAt: now.addingTimeInterval(3600)),
+            sevenDay: nil,
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        let merged = fresh.merging(cache: cache)
+        #expect(merged.fiveHour?.percent == 5)
+        #expect(merged.fiveHour?.resetsAt == now.addingTimeInterval(3600))
     }
 
-    @Test func zeroingExpiredZerosAllPastLimits() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-        let past = now.addingTimeInterval(-1)
-        let limits = RateLimits(
-            fiveHour: .init(usedPercentage: 50, resetsAt: past),
-            sevenDay: .init(usedPercentage: 60, resetsAt: past),
-            sevenDayOpus: .init(usedPercentage: 70, resetsAt: past),
-            sevenDaySonnet: .init(usedPercentage: 80, resetsAt: past)
+    @Test func mergingWithoutCacheReturnsFresh() {
+        let fresh = RateLimits(
+            fiveHour: .init(usedPercentage: 10, resetsAt: Date()),
+            sevenDay: nil,
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
         )
-        let result = limits.zeroingExpired(now: now)
-        #expect(result.hasAny == true)
-        #expect(result.fiveHour?.percent == 0)
-        #expect(result.sevenDay?.percent == 0)
-        #expect(result.sevenDayOpus?.percent == 0)
-        #expect(result.sevenDaySonnet?.percent == 0)
+        #expect(fresh.merging(cache: nil) == fresh)
+    }
+
+    @Test func roundTripsThroughEncoder() throws {
+        let original = RateLimits(
+            fiveHour: .init(usedPercentage: 47.5, resetsAt: Date(timeIntervalSince1970: 1_777_338_000)),
+            sevenDay: nil,
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(RateLimits.self, from: data)
+        #expect(decoded == original)
     }
 }

@@ -72,20 +72,23 @@ struct RateLimits: Decodable, Equatable {
 
     static func load(from url: URL = ClaudePaths.rateLimits) -> RateLimits? {
         guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
-        return (try? JSONDecoder().decode(RateLimits.self, from: data))?.droppingExpired()
+        return (try? JSONDecoder().decode(RateLimits.self, from: data))?.zeroingExpired()
     }
 
-    // The file at ~/.claude/rate-limits.json is only rewritten when Claude Code
-    // makes a request, so a `resets_at` in the past means the row is residue
-    // from the previous window — not the user's current state. Treat those as
-    // absent until the next request refreshes the file.
-    func droppingExpired(now: Date = Date()) -> RateLimits {
-        func keep(_ l: Limit?) -> Limit? { l.flatMap { $0.resetsAt > now ? $0 : nil } }
+    /// The file at ~/.claude/rate-limits.json is only rewritten when Claude Code
+    /// makes a request. If `resets_at` is in the past the window has rolled over
+    /// but no new request has been made yet — show 0 % so the bar is visible and
+    /// correct, keeping the known reset time until the file is refreshed.
+    func zeroingExpired(now: Date = Date()) -> RateLimits {
+        func zeroed(_ l: Limit?) -> Limit? {
+            guard let l else { return nil }
+            return l.resetsAt > now ? l : Limit(usedPercentage: 0, resetsAt: l.resetsAt)
+        }
         return RateLimits(
-            fiveHour: keep(fiveHour),
-            sevenDay: keep(sevenDay),
-            sevenDayOpus: keep(sevenDayOpus),
-            sevenDaySonnet: keep(sevenDaySonnet)
+            fiveHour: zeroed(fiveHour),
+            sevenDay: zeroed(sevenDay),
+            sevenDayOpus: zeroed(sevenDayOpus),
+            sevenDaySonnet: zeroed(sevenDaySonnet)
         )
     }
 }

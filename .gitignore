@@ -26,3 +26,6 @@ dist/
 
 # Logs / scratch
 *.log
+
+# Local screenshot backups before canvas padding
+docs/screenshots/_originals/

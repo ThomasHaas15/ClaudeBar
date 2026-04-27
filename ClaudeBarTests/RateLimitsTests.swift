@@ -40,4 +40,40 @@ struct RateLimitsTests {
         )
         #expect(limits.maxRatio == 0.92)
     }
+
+    @Test func droppingExpiredRemovesPastResets() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let limits = RateLimits(
+            fiveHour: .init(usedPercentage: 83, resetsAt: now.addingTimeInterval(-3600)),
+            sevenDay: .init(usedPercentage: 42, resetsAt: now.addingTimeInterval(86_400)),
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        let filtered = limits.droppingExpired(now: now)
+        #expect(filtered.fiveHour == nil)
+        #expect(filtered.sevenDay?.percent == 42)
+    }
+
+    @Test func droppingExpiredKeepsFutureResets() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let limits = RateLimits(
+            fiveHour: .init(usedPercentage: 10, resetsAt: now.addingTimeInterval(60)),
+            sevenDay: nil,
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        #expect(limits.droppingExpired(now: now).fiveHour?.percent == 10)
+    }
+
+    @Test func droppingExpiredEmptiesAllPastLimits() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let past = now.addingTimeInterval(-1)
+        let limits = RateLimits(
+            fiveHour: .init(usedPercentage: 50, resetsAt: past),
+            sevenDay: .init(usedPercentage: 60, resetsAt: past),
+            sevenDayOpus: .init(usedPercentage: 70, resetsAt: past),
+            sevenDaySonnet: .init(usedPercentage: 80, resetsAt: past)
+        )
+        #expect(limits.droppingExpired(now: now).hasAny == false)
+    }
 }

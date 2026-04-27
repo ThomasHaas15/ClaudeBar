@@ -72,7 +72,21 @@ struct RateLimits: Decodable, Equatable {
 
     static func load(from url: URL = ClaudePaths.rateLimits) -> RateLimits? {
         guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
-        return try? JSONDecoder().decode(RateLimits.self, from: data)
+        return (try? JSONDecoder().decode(RateLimits.self, from: data))?.droppingExpired()
+    }
+
+    // The file at ~/.claude/rate-limits.json is only rewritten when Claude Code
+    // makes a request, so a `resets_at` in the past means the row is residue
+    // from the previous window — not the user's current state. Treat those as
+    // absent until the next request refreshes the file.
+    func droppingExpired(now: Date = Date()) -> RateLimits {
+        func keep(_ l: Limit?) -> Limit? { l.flatMap { $0.resetsAt > now ? $0 : nil } }
+        return RateLimits(
+            fiveHour: keep(fiveHour),
+            sevenDay: keep(sevenDay),
+            sevenDayOpus: keep(sevenDayOpus),
+            sevenDaySonnet: keep(sevenDaySonnet)
+        )
     }
 }
 

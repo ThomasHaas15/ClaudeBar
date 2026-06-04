@@ -23,7 +23,7 @@ A macOS menu bar app that surfaces **Claude Code** usage at a glance — session
 - **Header at a glance** — today's tokens, weekly-limit delta since midnight, current streak
 - **Stats** — total sessions, total tokens, current and longest streak, longest session duration, 30-day activity heatmap
 - **Models** — per-model token share with input/output breakdown and a favorite-model summary
-- **Status** — Claude Code version, session activity ("2 working, 2 idle"), active session count, statusline installer
+- **Status** — Claude Code version, session activity ("2 working, 2 idle"), active session count, launch-at-login toggle, statusline installer
 - **Threshold notifications** — fires at 80% and 100% of session and weekly limits, once per reset window
 - **Visual indicator in the menu bar** — sparkle glyph picks up a colored dot when any limit goes warning (yellow ≥ 80%) or critical (red = 100%)
 - **No credentials, no network** — reads only local files under `~/.claude/`
@@ -117,7 +117,7 @@ xcodebuild -project ClaudeBar.xcodeproj -scheme ClaudeBar -configuration Debug t
 
 - `ClaudeBar/ClaudeBarApp.swift` — app entry, `MenuBarExtra` wiring
 - `ClaudeBar/Views/` — popover, header, tab bar, four tab views, reusable components
-- `ClaudeBar/Services/` — file readers (`StatsCache`, `RateLimits`, `Sessions`), `ClaudeFileWatcher`, `StatuslineInstaller`, `ThresholdTracker`, `NotificationCoordinator`, `LiveStats`
+- `ClaudeBar/Services/` — file readers (`StatsCache`, `RateLimits`, `Sessions`), `ClaudeFileWatcher`, `StatuslineInstaller`, `LoginItem`, `ThresholdTracker`, `NotificationCoordinator`, `LiveStats`
 - `ClaudeBar/DesignSystem/` — `Theme`, `ViewModifiers`
 
 ## License

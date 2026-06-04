@@ -27,6 +27,7 @@ struct PopoverRoot: View {
             rateLimits.reload()
             sessions.reload()
             StatuslineInstaller.shared.refresh()
+            LoginItem.shared.refresh()
         }
     }
 

@@ -8,6 +8,7 @@ struct StatusTab: View {
             row("Version", value: sessions.version ?? "—")
             row("Status", value: humanStatus)
             row("Active sessions", value: "\(sessions.activeCount)")
+            launchAtLoginRow
             Divider().padding(.top, 4)
             statuslineRow
         }
@@ -22,6 +23,36 @@ struct StatusTab: View {
                 .foregroundStyle(.primary)
         }
         .font(.body)
+    }
+
+    @ViewBuilder
+    private var launchAtLoginRow: some View {
+        let loginItem = LoginItem.shared
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Launch at login").foregroundStyle(.secondary)
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { loginItem.isEnabled },
+                    set: { loginItem.setEnabled($0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+            }
+            .font(.body)
+
+            if loginItem.requiresApproval {
+                HStack(spacing: 6) {
+                    Text("Approve in System Settings to enable.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Open") { loginItem.openSettings() }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                }
+            }
+        }
     }
 
     private var humanStatus: String {

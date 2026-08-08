@@ -5,6 +5,7 @@ import UserNotifications
 @Observable
 final class NotificationCoordinator {
     @ObservationIgnored private let tracker = ThresholdTracker()
+    @ObservationIgnored private let weekly = WeeklyResetTracker()
     @ObservationIgnored private let store: RateLimitsStore
     @ObservationIgnored private var previous: RateLimits?
     @ObservationIgnored private var observer: NSObjectProtocol?
@@ -23,6 +24,10 @@ final class NotificationCoordinator {
         ) { [weak self] _ in
             Task { @MainActor in self?.evaluate() }
         }
+        // Catch a rollover that happened while the app wasn't running — the
+        // store publishes before this object exists, so waiting for the next
+        // change would miss it.
+        evaluate()
     }
 
     private func requestAuthorizationIfNeeded() {
@@ -37,9 +42,11 @@ final class NotificationCoordinator {
         // would suppress the next window's warning: yesterday's 88 % is never
         // crossed again by today's.
         let current = store.limits
-        let events = tracker.crossings(previous: previous, current: current)
+        let crossings = tracker.crossings(previous: previous, current: current)
+        let resets = weekly.resets(in: current)
         previous = current
-        for event in events { fire(event) }
+        for event in crossings { fire(event) }
+        for reset in resets { fire(reset) }
     }
 
     private func fire(_ event: ThresholdEvent) {
@@ -56,6 +63,20 @@ final class NotificationCoordinator {
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: "claudebar.\(event.kind.rawValue).\(event.level.rawValue).\(Int(event.resetsAt.timeIntervalSince1970))",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    private func fire(_ reset: WeeklyReset) {
+        requestAuthorizationIfNeeded()
+        let content = UNMutableNotificationContent()
+        content.title = "\(reset.kind.label) limit reset"
+        content.body = "Was \(reset.previousPercent)% · next reset \(DurationFormat.resetDateTime(reset.resetsAt))"
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "claudebar.\(reset.kind.rawValue).reset.\(Int(reset.resetsAt.timeIntervalSince1970))",
             content: content,
             trigger: nil
         )

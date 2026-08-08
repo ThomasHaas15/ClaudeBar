@@ -66,7 +66,11 @@ final class WeeklyResetTracker {
 
             let peak = Int(max(seen[1], 0).rounded(.down))
             let startedAt = Date(timeIntervalSince1970: seen[0])
-            if peak >= Self.minimumPeak, now.timeIntervalSince(startedAt) <= Self.freshness {
+            // A negative age means the boundary we were tracking is still in
+            // the future while a later one has already appeared — the window
+            // hasn't ended yet, so there's nothing to announce.
+            let age = now.timeIntervalSince(startedAt)
+            if peak >= Self.minimumPeak, (0...Self.freshness).contains(age) {
                 events.append(WeeklyReset(kind: kind, previousPercent: peak, resetsAt: current.resetsAt))
             }
             windows[kind.rawValue] = [resetsAt, current.usedPercentage]

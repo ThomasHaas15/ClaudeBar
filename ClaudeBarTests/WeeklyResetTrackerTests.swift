@@ -90,6 +90,21 @@ struct WeeklyResetTrackerTests {
         #expect(events.isEmpty)
     }
 
+    /// If Anthropic moves a weekly boundary, a later `resets_at` can show up
+    /// while the one we were tracking is still ahead of us. Nothing has ended,
+    /// so nothing should be announced.
+    @Test func staysQuietWhenTheBoundaryMovesBeforeTheWindowHasEnded() {
+        let tracker = WeeklyResetTracker(defaults: defaults())
+        let firstReset = now.addingTimeInterval(3600)
+        _ = tracker.resets(in: weekly(88, resetsAt: firstReset), now: now)
+
+        let events = tracker.resets(
+            in: weekly(88, resetsAt: firstReset.addingTimeInterval(RateLimits.week)),
+            now: now.addingTimeInterval(60)
+        )
+        #expect(events.isEmpty)
+    }
+
     @Test func ignoresSessionWindows() {
         let tracker = WeeklyResetTracker(defaults: defaults())
         func session(_ percent: Double, resetsAt: Date) -> RateLimits {

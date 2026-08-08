@@ -40,8 +40,8 @@ final class ThresholdTracker {
         guard let current else { return [] }
         var events: [ThresholdEvent] = []
         for kind in LimitKind.allCases {
-            let cur = limit(for: kind, in: current)
-            let prev = previous.flatMap { limit(for: kind, in: $0) }
+            let cur = current.limit(for: kind)
+            let prev = previous?.limit(for: kind)
             guard let cur else { continue }
             for level in [ThresholdLevel.warn, .critical] {
                 let crossed = (prev?.usedPercentage ?? 0) < Double(level.rawValue) && cur.usedPercentage >= Double(level.rawValue)
@@ -59,15 +59,6 @@ final class ThresholdTracker {
         }
         prune(current: current)
         return events
-    }
-
-    private func limit(for kind: LimitKind, in limits: RateLimits) -> RateLimits.Limit? {
-        switch kind {
-        case .fiveHour:       return limits.fiveHour
-        case .sevenDay:       return limits.sevenDay
-        case .sevenDaySonnet: return limits.sevenDaySonnet
-        case .sevenDayOpus:   return limits.sevenDayOpus
-        }
     }
 
     private func storage() -> [String: Double] {

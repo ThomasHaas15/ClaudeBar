@@ -76,6 +76,24 @@ struct RateLimits: Codable, Equatable {
             .max() ?? 0
     }
 
+    func limit(for kind: LimitKind) -> Limit? {
+        switch kind {
+        case .fiveHour:       return fiveHour
+        case .sevenDay:       return sevenDay
+        case .sevenDaySonnet: return sevenDaySonnet
+        case .sevenDayOpus:   return sevenDayOpus
+        }
+    }
+
+    /// The earliest reset still ahead of `now` — the next moment the display
+    /// changes on its own, with no file write to trigger it.
+    func nextReset(after now: Date = Date()) -> Date? {
+        [fiveHour, sevenDay, sevenDayOpus, sevenDaySonnet]
+            .compactMap { $0?.resetsAt }
+            .filter { $0 > now }
+            .min()
+    }
+
     static func load(from url: URL = ClaudePaths.rateLimits) -> RateLimits? {
         guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
         return try? JSONDecoder().decode(RateLimits.self, from: data)
@@ -95,19 +113,67 @@ struct RateLimits: Codable, Equatable {
             sevenDaySonnet: sevenDaySonnet ?? cache?.sevenDaySonnet
         )
     }
+
+    static let week: TimeInterval = 7 * 24 * 60 * 60
+
+    /// Roll any window whose reset has already passed into the one that
+    /// replaced it. `~/.claude/rate-limits.json` is only rewritten when Claude
+    /// Code makes a request, so between requests it keeps reporting a window
+    /// that already ended — this reconstructs the current one locally, with no
+    /// network call, because a rolled-over window is empty by definition.
+    ///
+    /// The two window types roll differently:
+    ///
+    /// - Weekly windows reset on a fixed 7-day cadence, so the next reset time
+    ///   is known — advance it a whole number of weeks and show it.
+    /// - A session window only begins when the next request is made, so its
+    ///   reset time is genuinely unknown. Leave it in the past, which is what
+    ///   the Usage tab keys "Resets after next request" off.
+    func rolledOver(now: Date = Date()) -> RateLimits {
+        RateLimits(
+            fiveHour:       Self.rollSession(fiveHour, now: now),
+            sevenDay:       Self.rollWeekly(sevenDay, now: now),
+            sevenDayOpus:   Self.rollWeekly(sevenDayOpus, now: now),
+            sevenDaySonnet: Self.rollWeekly(sevenDaySonnet, now: now)
+        )
+    }
+
+    private static func rollSession(_ limit: Limit?, now: Date) -> Limit? {
+        guard let limit, limit.resetsAt <= now else { return limit }
+        return Limit(usedPercentage: 0, resetsAt: limit.resetsAt)
+    }
+
+    private static func rollWeekly(_ limit: Limit?, now: Date) -> Limit? {
+        guard let limit, limit.resetsAt <= now else { return limit }
+        // Whole weeks elapsed since the stale reset, plus the one in progress.
+        // Fixed 604800 s steps rather than calendar days: the cadence is a UTC
+        // instant, so it must not drift an hour across a DST change.
+        let weeks = (now.timeIntervalSince(limit.resetsAt) / week).rounded(.down) + 1
+        return Limit(usedPercentage: 0, resetsAt: limit.resetsAt.addingTimeInterval(weeks * week))
+    }
 }
 
 @MainActor
 @Observable
 final class RateLimitsStore {
+    /// Posted after `limits` changes, so anything reacting to rate limits reads
+    /// the same merged, rolled-over value the UI does instead of racing the
+    /// store to re-read the file itself.
+    nonisolated static let didUpdate = Notification.Name("ClaudeBar.rateLimitsDidUpdate")
+
+    /// What the UI shows: last-known data with expired windows rolled over.
     private(set) var limits: RateLimits?
+
+    /// Last-known data exactly as Claude Code wrote it. Kept unrolled so it can
+    /// stay the merge base and the persisted cache across window resets.
+    @ObservationIgnored private var lastKnown: RateLimits?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let cacheKey = "ClaudeBar.lastKnownRateLimits.v1"
     @ObservationIgnored private var observer: NSObjectProtocol?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.limits = loadCache()
+        self.lastKnown = loadCache()
         reload()
         observer = NotificationCenter.default.addObserver(
             forName: ClaudeFileWatcher.rateLimitsChanged,
@@ -120,9 +186,24 @@ final class RateLimitsStore {
 
     func reload() {
         let fresh = RateLimits.load()
-        let merged = fresh?.merging(cache: limits) ?? limits
-        limits = merged
+        let merged = fresh?.merging(cache: lastKnown) ?? lastKnown
+        lastKnown = merged
         saveCache(merged)
+        publish()
+    }
+
+    /// Re-derive the display value from data already in memory. Windows expire
+    /// on a clock, not on a file write, so this has to run on a timer too —
+    /// see `ClaudeFileWatcher`. No I/O, no network.
+    private func publish() {
+        let rolled = lastKnown?.rolledOver()
+        // Assigning an equal value would still fire @Observable and churn the
+        // menu bar every tick, so only publish real changes.
+        if rolled != limits {
+            limits = rolled
+            NotificationCenter.default.post(name: Self.didUpdate, object: nil)
+        }
+        ClaudeFileWatcher.shared.scheduleResetBoundary(rolled?.nextReset())
     }
 
     private func loadCache() -> RateLimits? {

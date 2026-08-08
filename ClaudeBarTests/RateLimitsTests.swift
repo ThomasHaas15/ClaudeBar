@@ -90,6 +90,48 @@ struct RateLimitsTests {
         #expect(fresh.merging(cache: nil) == fresh)
     }
 
+    /// The regression PR #5 hit and PR #6 reverted. #5 zeroed inside `load()`,
+    /// on the raw file — but Claude Code *deletes* an expired key rather than
+    /// leaving it stale, so there was nothing to zero and the row disappeared.
+    /// The cache has to fill the key back in *before* the rollover empties it,
+    /// which is why the store rolls over after merging rather than at load.
+    @Test func aDeletedKeyComesBackAsAnEmptyWindowRatherThanVanishing() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let expired = now.addingTimeInterval(-60)
+        let cache = RateLimits(
+            fiveHour: .init(usedPercentage: 97, resetsAt: expired),
+            sevenDay: .init(usedPercentage: 88, resetsAt: expired),
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        // What Claude Code leaves behind once the windows expire: keys gone.
+        let fresh = RateLimits(fiveHour: nil, sevenDay: nil, sevenDayOpus: nil, sevenDaySonnet: nil)
+
+        let shown = fresh.merging(cache: cache).rolledOver(now: now)
+
+        #expect(shown.fiveHour?.percent == 0)
+        #expect(shown.sevenDay?.percent == 0)
+        #expect(shown.sevenDay?.resetsAt == expired.addingTimeInterval(RateLimits.week))
+        #expect(shown.maxRatio == 0)
+    }
+
+    /// Order matters: rolling over first and merging second would let the
+    /// cached percentage overwrite the emptied window and put 88 % back.
+    @Test func rollingOverBeforeMergingWouldResurrectTheOldPercentage() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let expired = now.addingTimeInterval(-60)
+        let cache = RateLimits(
+            fiveHour: nil,
+            sevenDay: .init(usedPercentage: 88, resetsAt: expired),
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        let fresh = RateLimits(fiveHour: nil, sevenDay: nil, sevenDayOpus: nil, sevenDaySonnet: nil)
+
+        #expect(fresh.rolledOver(now: now).merging(cache: cache).sevenDay?.percent == 88)
+        #expect(fresh.merging(cache: cache).rolledOver(now: now).sevenDay?.percent == 0)
+    }
+
     @Test func rolledOverLeavesLiveWindowsUntouched() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let limits = RateLimits(

@@ -5,14 +5,19 @@ import UserNotifications
 @Observable
 final class NotificationCoordinator {
     @ObservationIgnored private let tracker = ThresholdTracker()
+    @ObservationIgnored private let store: RateLimitsStore
     @ObservationIgnored private var previous: RateLimits?
     @ObservationIgnored private var observer: NSObjectProtocol?
     @ObservationIgnored private var authRequested = false
 
-    init() {
-        previous = RateLimits.load()
+    /// Reads the store rather than the file: the store's value is merged with
+    /// the cache and rolled over, so a window that reset while Claude Code was
+    /// idle is seen at the reset instead of at the next request.
+    init(store: RateLimitsStore) {
+        self.store = store
+        previous = store.limits
         observer = NotificationCenter.default.addObserver(
-            forName: ClaudeFileWatcher.rateLimitsChanged,
+            forName: RateLimitsStore.didUpdate,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -27,7 +32,11 @@ final class NotificationCoordinator {
     }
 
     private func evaluate() {
-        let current = RateLimits.load()
+        // The store's value is rolled over, so a window that has reset drops
+        // the baseline back to 0 %. Comparing raw file values across a reset
+        // would suppress the next window's warning: yesterday's 88 % is never
+        // crossed again by today's.
+        let current = store.limits
         let events = tracker.crossings(previous: previous, current: current)
         previous = current
         for event in events { fire(event) }

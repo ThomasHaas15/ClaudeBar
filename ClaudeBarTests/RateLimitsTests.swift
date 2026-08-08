@@ -90,6 +90,96 @@ struct RateLimitsTests {
         #expect(fresh.merging(cache: nil) == fresh)
     }
 
+    @Test func rolledOverLeavesLiveWindowsUntouched() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let limits = RateLimits(
+            fiveHour: .init(usedPercentage: 4, resetsAt: now.addingTimeInterval(3600)),
+            sevenDay: .init(usedPercentage: 88, resetsAt: now.addingTimeInterval(86_400)),
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        #expect(limits.rolledOver(now: now) == limits)
+    }
+
+    @Test func rolledOverEmptiesExpiredSessionButKeepsResetInPast() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let expired = now.addingTimeInterval(-90 * 60)
+        let limits = RateLimits(
+            fiveHour: .init(usedPercentage: 97, resetsAt: expired),
+            sevenDay: nil,
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        let rolled = limits.rolledOver(now: now)
+        #expect(rolled.fiveHour?.percent == 0)
+        // Left in the past on purpose: a session window only starts on the next
+        // request, so the row reads "Resets after next request".
+        #expect(rolled.fiveHour?.resetsAt == expired)
+    }
+
+    @Test func rolledOverAdvancesExpiredWeeklyByOneWeek() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let expired = now.addingTimeInterval(-3600)
+        let limits = RateLimits(
+            fiveHour: nil,
+            sevenDay: .init(usedPercentage: 88, resetsAt: expired),
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        let rolled = limits.rolledOver(now: now)
+        #expect(rolled.sevenDay?.percent == 0)
+        #expect(rolled.sevenDay?.resetsAt == expired.addingTimeInterval(RateLimits.week))
+    }
+
+    @Test func rolledOverSkipsWholeWeeksThatWerePassedWhileIdle() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let expired = now.addingTimeInterval(-3 * RateLimits.week - 3600)
+        let limits = RateLimits(
+            fiveHour: nil,
+            sevenDay: nil,
+            sevenDayOpus: nil,
+            sevenDaySonnet: .init(usedPercentage: 61, resetsAt: expired)
+        )
+        let rolled = limits.rolledOver(now: now)
+        #expect(rolled.sevenDaySonnet?.percent == 0)
+        #expect(rolled.sevenDaySonnet?.resetsAt == expired.addingTimeInterval(4 * RateLimits.week))
+        #expect(rolled.sevenDaySonnet.map { $0.resetsAt > now } == true)
+    }
+
+    @Test func rolledOverClearsTheMenuBarDot() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let limits = RateLimits(
+            fiveHour: .init(usedPercentage: 100, resetsAt: now.addingTimeInterval(-1)),
+            sevenDay: .init(usedPercentage: 88, resetsAt: now.addingTimeInterval(-1)),
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        #expect(limits.maxRatio == 1.0)
+        #expect(limits.rolledOver(now: now).maxRatio == 0)
+    }
+
+    @Test func nextResetPicksEarliestFutureBoundary() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let limits = RateLimits(
+            fiveHour: .init(usedPercentage: 4, resetsAt: now.addingTimeInterval(7200)),
+            sevenDay: .init(usedPercentage: 88, resetsAt: now.addingTimeInterval(3600)),
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        #expect(limits.nextReset(after: now) == now.addingTimeInterval(3600))
+    }
+
+    @Test func nextResetIgnoresBoundariesAlreadyPassed() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let limits = RateLimits(
+            fiveHour: .init(usedPercentage: 4, resetsAt: now.addingTimeInterval(-3600)),
+            sevenDay: nil,
+            sevenDayOpus: nil,
+            sevenDaySonnet: nil
+        )
+        #expect(limits.nextReset(after: now) == nil)
+    }
+
     @Test func roundTripsThroughEncoder() throws {
         let original = RateLimits(
             fiveHour: .init(usedPercentage: 47.5, resetsAt: Date(timeIntervalSince1970: 1_777_338_000)),

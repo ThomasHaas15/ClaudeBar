@@ -18,16 +18,16 @@ struct UsageTab: View {
     private func limitRows(_ limits: RateLimits) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             if let l = limits.fiveHour {
-                LimitRow(title: "Session", limit: l, resetPrefix: "Resets")
+                LimitRow(title: "Session", limit: l)
             }
             if let l = limits.sevenDay {
-                LimitRow(title: "Week (all models)", limit: l, resetPrefix: "Resets")
+                LimitRow(title: "Week (all models)", limit: l)
             }
             if let l = limits.sevenDaySonnet {
-                LimitRow(title: "Week (Sonnet only)", limit: l, resetPrefix: "Resets")
+                LimitRow(title: "Week (Sonnet only)", limit: l)
             }
             if let l = limits.sevenDayOpus, limits.sevenDaySonnet == nil {
-                LimitRow(title: "Week (Opus only)", limit: l, resetPrefix: "Resets")
+                LimitRow(title: "Week (Opus only)", limit: l)
             }
         }
     }
@@ -53,7 +53,6 @@ struct UsageTab: View {
 private struct LimitRow: View {
     let title: String
     let limit: RateLimits.Limit
-    let resetPrefix: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -65,21 +64,34 @@ private struct LimitRow: View {
                     .monoDigits()
             }
             ProgressBar(ratio: limit.ratio, color: .forUtilization(limit.ratio))
-            Text("\(resetPrefix) \(resetText)")
+            Text(LimitCaption.text(resetsAt: limit.resetsAt))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
+}
 
-    private var resetText: String {
-        guard limit.resetsAt > Date() else {
-            return "after next request"
-        }
+/// The line under a limit's bar. Split out of the view so it can be tested.
+enum LimitCaption {
+    static func text(resetsAt: Date, now: Date = Date()) -> String {
+        // A window whose reset has already passed has been rolled over to
+        // empty, so there is nothing left in it to reset — and the window that
+        // replaces it only begins when Claude Code makes a request, so its
+        // reset time is unknowable until then. "Resets …" under a 0 % bar
+        // reads as if something were still pending; name what actually
+        // happens next instead.
+        guard resetsAt > now else { return "Starts on next request" }
         let cal = Calendar.current
-        if cal.isDateInToday(limit.resetsAt) || cal.isDateInTomorrow(limit.resetsAt) {
-            let tz = TimeZone.current.identifier
-            return "\(DurationFormat.resetClock(limit.resetsAt)) · \(tz)"
+        let daysAway = cal.dateComponents(
+            [.day],
+            from: cal.startOfDay(for: now),
+            to: cal.startOfDay(for: resetsAt)
+        ).day ?? 0
+        // Today or tomorrow: the date carries no information the clock doesn't,
+        // but the time zone does, since the boundary is a UTC instant.
+        if daysAway <= 1 {
+            return "Resets \(DurationFormat.resetClock(resetsAt)) · \(TimeZone.current.identifier)"
         }
-        return DurationFormat.resetDateTime(limit.resetsAt)
+        return "Resets \(DurationFormat.resetDateTime(resetsAt))"
     }
 }

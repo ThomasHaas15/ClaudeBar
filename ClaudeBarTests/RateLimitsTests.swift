@@ -155,7 +155,7 @@ struct RateLimitsTests {
         let rolled = limits.rolledOver(now: now)
         #expect(rolled.fiveHour?.percent == 0)
         // Left in the past on purpose: a session window only starts on the next
-        // request, so the row reads "Resets after next request".
+        // request, so the row reads "Starts on next request".
         #expect(rolled.fiveHour?.resetsAt == expired)
     }
 

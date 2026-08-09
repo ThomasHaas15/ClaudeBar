@@ -50,4 +50,24 @@ struct StatsCacheTests {
         #expect(merged.allActiveDates.contains("2026-04-27"))
         #expect(merged.totalSessions == 2)
     }
+
+    /// "Tokens today" counts the day the store hands over, not the day the
+    /// numbers were written on — so once `StatsStore` moves `today` on at
+    /// midnight the header drops to zero without needing a file to change.
+    @Test func todayTokensFollowTheDayTheyAreGiven() {
+        var live = LiveStats()
+        live.tokensByDate["2026-04-27"] = 241_000
+        let cal = Calendar(identifier: .gregorian)
+        let f = DateFormatter()
+        f.calendar = cal
+        f.dateFormat = "yyyy-MM-dd"
+        let day = f.date(from: "2026-04-27")!
+        let nextDay = cal.date(byAdding: .day, value: 1, to: day)!
+
+        #expect(MergedStats(cache: nil, live: live, today: day).todayTokens == 241_000)
+        // Midnight, no further activity: yesterday's total is not today's.
+        #expect(MergedStats(cache: nil, live: live, today: nextDay).todayTokens == 0)
+        // …and the day it was earned on still reads back the same.
+        #expect(MergedStats(cache: nil, live: live, today: nextDay).tokens(forDay: "2026-04-27") == 241_000)
+    }
 }

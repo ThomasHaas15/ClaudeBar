@@ -57,6 +57,17 @@ struct MergedStats: Equatable {
     let cache: StatsCache?
     let live: LiveStats
 
+    /// Start of the local day "today" refers to. Passed in rather than read
+    /// off the clock so that it changes only when `StatsStore` says it does —
+    /// see the note on `StatsStore.today`.
+    let today: Date
+
+    init(cache: StatsCache?, live: LiveStats, today: Date = Calendar.current.startOfDay(for: Date())) {
+        self.cache = cache
+        self.live = live
+        self.today = today
+    }
+
     var totalTokens: Int {
         let cached = cache?.modelUsage.values.reduce(0) { $0 + $1.inputTokens + $1.outputTokens } ?? 0
         let extra = live.modelInputOutput.values.reduce(0) { $0 + $1.input + $1.output }
@@ -76,7 +87,7 @@ struct MergedStats: Equatable {
         return cached + (live.tokensByDate[date] ?? 0)
     }
 
-    var todayTokens: Int { tokens(forDay: StatsCache.todayString()) }
+    var todayTokens: Int { tokens(forDay: StatsCache.todayString(today)) }
 
     var allActiveDates: [String] {
         var set = Set(cache?.dailyActivity.map(\.date) ?? [])
@@ -102,7 +113,16 @@ struct MergedStats: Equatable {
 final class StatsStore {
     private(set) var cache: StatsCache?
     private(set) var live: LiveStats = LiveStats()
-    var merged: MergedStats { MergedStats(cache: cache, live: live) }
+
+    /// The local day "tokens today" counts, as a start-of-day instant. Held as
+    /// observed state rather than read off the clock at render time: SwiftUI
+    /// only re-runs `body` when observed state changes, and a Mac left alone
+    /// past midnight changes nothing else — Claude Code writes to `~/.claude`
+    /// only when it makes a request. Without this the header would keep
+    /// yesterday's total until the next prompt.
+    private(set) var today: Date = Calendar.current.startOfDay(for: Date())
+
+    var merged: MergedStats { MergedStats(cache: cache, live: live, today: today) }
 
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
@@ -114,10 +134,13 @@ final class StatsStore {
                 Task { @MainActor in self?.reload() }
             },
             nc.addObserver(forName: ClaudeFileWatcher.rateLimitsChanged, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.rescanLive() }
+                Task { @MainActor in self?.refresh() }
             },
             nc.addObserver(forName: ClaudeFileWatcher.sessionsChanged, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.rescanLive() }
+                Task { @MainActor in self?.refresh() }
+            },
+            nc.addObserver(forName: ClaudeFileWatcher.dayChanged, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refreshToday() }
             }
         ]
     }
@@ -125,7 +148,20 @@ final class StatsStore {
 
     func reload() {
         cache = StatsCache.load()
+        refresh()
+    }
+
+    private func refresh() {
+        refreshToday()
         rescanLive()
+    }
+
+    /// Move `today` on once the clock has passed midnight. Cheap enough to run
+    /// on every refresh; the day timer in `ClaudeFileWatcher` only makes it
+    /// prompt rather than up to one poll late.
+    private func refreshToday(now: Date = Date()) {
+        let start = Calendar.current.startOfDay(for: now)
+        if today != start { today = start }
     }
 
     private func rescanLive() {

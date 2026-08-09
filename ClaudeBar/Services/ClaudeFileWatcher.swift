@@ -8,6 +8,7 @@ final class ClaudeFileWatcher {
     nonisolated static let statsChanged = Notification.Name("ClaudeBar.statsChanged")
     nonisolated static let rateLimitsChanged = Notification.Name("ClaudeBar.rateLimitsChanged")
     nonisolated static let sessionsChanged = Notification.Name("ClaudeBar.sessionsChanged")
+    nonisolated static let dayChanged = Notification.Name("ClaudeBar.dayChanged")
 
     private static let pollInterval: TimeInterval = 30
 
@@ -15,6 +16,7 @@ final class ClaudeFileWatcher {
     private var pollTimer: DispatchSourceTimer?
     private var boundaryTimer: DispatchSourceTimer?
     private var boundaryDeadline: Date?
+    private var dayTimer: DispatchSourceTimer?
     private var observers: [NSObjectProtocol] = []
 
     private init() {}
@@ -41,6 +43,7 @@ final class ClaudeFileWatcher {
         timer.resume()
         pollTimer = timer
 
+        scheduleDayBoundary()
         observeSystemEvents()
     }
 
@@ -72,12 +75,51 @@ final class ClaudeFileWatcher {
         boundaryTimer = timer
     }
 
+    /// Fire at the next local midnight so "tokens today" starts a fresh day on
+    /// the clock. Claude Code writes to `~/.claude` only when it makes a
+    /// request, so a Mac left alone overnight produces no file event to notice
+    /// the day on — the header would sit on yesterday's total until the next
+    /// prompt. Re-arms itself for the following midnight.
+    ///
+    /// No power assertion here either: a Mac asleep at midnight catches up via
+    /// the wake handler rather than being woken for a number in a menu.
+    private func scheduleDayBoundary() {
+        dayTimer?.cancel()
+        dayTimer = nil
+
+        let now = Date()
+        // `nextDate(after:matching:)` rather than +86400: a DST change makes
+        // the local day 23 or 25 hours long, and in a few zones midnight
+        // itself is skipped — which `.nextTime` resolves to the hour after.
+        guard let midnight = Calendar.current.nextDate(
+            after: now,
+            matching: DateComponents(hour: 0, minute: 0, second: 0),
+            matchingPolicy: .nextTime
+        ) else { return }
+
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        // Wall-clock, and a second past midnight so `startOfDay` is
+        // unambiguously the new day by the time the handler runs.
+        timer.schedule(wallDeadline: .now() + midnight.timeIntervalSince(now) + 1)
+        timer.setEventHandler { [weak self] in
+            NotificationCenter.default.post(name: ClaudeFileWatcher.dayChanged, object: nil)
+            self?.scheduleDayBoundary()
+        }
+        timer.resume()
+        dayTimer = timer
+    }
+
     /// Waking and clock changes both invalidate whatever the timers were
     /// counting toward, so re-evaluate immediately on either.
     private func observeSystemEvents() {
-        let post: @Sendable (Notification) -> Void = { _ in
+        let post: @Sendable (Notification) -> Void = { [weak self] _ in
             NotificationCenter.default.post(name: ClaudeFileWatcher.rateLimitsChanged, object: nil)
             NotificationCenter.default.post(name: ClaudeFileWatcher.sessionsChanged, object: nil)
+            NotificationCenter.default.post(name: ClaudeFileWatcher.dayChanged, object: nil)
+            // Sleeping through midnight passes the deadline without firing it,
+            // and moving time zone moves midnight itself — both leave the day
+            // timer counting toward the wrong instant.
+            Task { @MainActor in self?.scheduleDayBoundary() }
         }
         observers.append(
             NSWorkspace.shared.notificationCenter.addObserver(

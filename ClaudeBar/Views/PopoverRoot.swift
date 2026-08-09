@@ -12,7 +12,7 @@ struct PopoverRoot: View {
         VStack(alignment: .leading, spacing: Theme.sectionSpacing) {
             PopoverHeader(
                 todayTokens: stats.merged.todayTokens,
-                streakDays: StreakCalculator.current(from: stats.merged.allActiveDates)
+                streakDays: StreakCalculator.current(from: stats.merged.allActiveDates, today: stats.today)
             )
             TabBar(selection: $tab)
             tabContent

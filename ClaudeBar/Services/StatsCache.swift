@@ -111,6 +111,10 @@ struct MergedStats: Equatable {
 @MainActor
 @Observable
 final class StatsStore {
+    /// Floor between live rescans. A scan walks every session log to stat it, so
+    /// this — not the work itself — is what bounds the cost of a busy session.
+    private static let rescanInterval: Duration = .milliseconds(1500)
+
     private(set) var cache: StatsCache?
     private(set) var live: LiveStats = LiveStats()
 
@@ -177,9 +181,14 @@ final class StatsStore {
         rescanRequested = true
         guard scanTask == nil else { return }
         scanTask = Task(priority: .utility) { [weak self] in
-            // Let a burst settle before paying for a scan at all.
-            try? await Task.sleep(for: .milliseconds(400))
             while let self, self.rescanRequested {
+                // Every pass waits, not just the first: while a session is
+                // active the next request lands before the current scan ends,
+                // so without a floor between passes this loop scans a directory
+                // of thousands of logs back to back for as long as the writing
+                // continues. Clearing the flag after the wait folds everything
+                // that arrived during it into the pass about to run.
+                try? await Task.sleep(for: Self.rescanInterval)
                 self.rescanRequested = false
                 let result = await LiveStatsScanner.shared.scan(modifiedAfter: self.cacheMTime())
                 self.applyLive(result)

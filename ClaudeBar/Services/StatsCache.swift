@@ -125,6 +125,8 @@ final class StatsStore {
     var merged: MergedStats { MergedStats(cache: cache, live: live, today: today) }
 
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    @ObservationIgnored private var scanTask: Task<Void, Never>?
+    @ObservationIgnored private var rescanRequested = false
 
     init() {
         reload()
@@ -164,11 +166,25 @@ final class StatsStore {
         if today != start { today = start }
     }
 
+    /// Requests a rescan, collapsing a burst of them into one.
+    ///
+    /// Claude Code appends to a session log on every message and the watcher
+    /// fires per write, so requests arrive far faster than a scan retires.
+    /// Starting one per request lets them overlap without bound, which costs a
+    /// core per scan still in flight. At most one runs here, and requests raised
+    /// while it works earn exactly one more pass.
     private func rescanLive() {
-        let cutoff = cacheMTime()
-        Task.detached(priority: .utility) { [weak self] in
-            let result = LiveStatsScanner.scan(modifiedAfter: cutoff)
-            await self?.applyLive(result)
+        rescanRequested = true
+        guard scanTask == nil else { return }
+        scanTask = Task(priority: .utility) { [weak self] in
+            // Let a burst settle before paying for a scan at all.
+            try? await Task.sleep(for: .milliseconds(400))
+            while let self, self.rescanRequested {
+                self.rescanRequested = false
+                let result = await LiveStatsScanner.shared.scan(modifiedAfter: self.cacheMTime())
+                self.applyLive(result)
+            }
+            self?.scanTask = nil
         }
     }
 

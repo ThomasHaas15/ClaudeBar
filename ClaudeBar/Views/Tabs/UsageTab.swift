@@ -29,6 +29,11 @@ struct UsageTab: View {
             if let l = limits.sevenDayOpus, limits.sevenDaySonnet == nil {
                 LimitRow(title: "Week (Opus only)", limit: l)
             }
+            // Only sessions behind a Claude apps gateway with a spend cap
+            // report this one.
+            if let l = limits.spendLimit {
+                LimitRow(title: "Spend limit", limit: l, whenPast: "Updates on next request")
+            }
         }
     }
 
@@ -53,6 +58,7 @@ struct UsageTab: View {
 private struct LimitRow: View {
     let title: String
     let limit: RateLimits.Limit
+    var whenPast: String = "Starts on next request"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -64,7 +70,7 @@ private struct LimitRow: View {
                     .monoDigits()
             }
             ProgressBar(ratio: limit.ratio, color: .forUtilization(limit.ratio))
-            Text(LimitCaption.text(resetsAt: limit.resetsAt))
+            Text(LimitCaption.text(resetsAt: limit.resetsAt, whenPast: whenPast))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -73,14 +79,18 @@ private struct LimitRow: View {
 
 /// The line under a limit's bar. Split out of the view so it can be tested.
 enum LimitCaption {
-    static func text(resetsAt: Date, now: Date = Date()) -> String {
+    static func text(
+        resetsAt: Date,
+        now: Date = Date(),
+        whenPast: String = "Starts on next request"
+    ) -> String {
         // A window whose reset has already passed has been rolled over to
         // empty, so there is nothing left in it to reset — and the window that
         // replaces it only begins when Claude Code makes a request, so its
         // reset time is unknowable until then. "Resets …" under a 0 % bar
         // reads as if something were still pending; name what actually
         // happens next instead.
-        guard resetsAt > now else { return "Starts on next request" }
+        guard resetsAt > now else { return whenPast }
         let cal = Calendar.current
         let daysAway = cal.dateComponents(
             [.day],

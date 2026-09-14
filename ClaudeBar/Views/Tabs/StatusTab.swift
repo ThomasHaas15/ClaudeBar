@@ -6,7 +6,7 @@ struct StatusTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             row("Version", value: sessions.version ?? "—")
-            row("Status", value: humanStatus)
+            row("Status", value: sessions.activitySummary)
             row("Active sessions", value: "\(sessions.activeCount)")
             launchAtLoginRow
             Divider().padding(.top, 4)
@@ -53,16 +53,6 @@ struct StatusTab: View {
                 }
             }
         }
-    }
-
-    private var humanStatus: String {
-        guard !sessions.sessions.isEmpty else { return "Not running" }
-        let statuses = sessions.sessions.compactMap { $0.status?.lowercased() }
-        let busy = statuses.filter { $0 == "busy" }.count
-        if busy > 0 {
-            return sessions.sessions.count == 1 ? "Working" : "\(busy) working, \(sessions.sessions.count - busy) idle"
-        }
-        return "Idle"
     }
 
 

@@ -3,8 +3,7 @@ import SwiftUI
 struct ModelRow: View {
     let displayName: String
     let percent: Double
-    let inputTokens: Int
-    let outputTokens: Int
+    let usage: TokenUsage
     let dotColor: Color
 
     var body: some View {
@@ -16,7 +15,7 @@ struct ModelRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(displayName)
                     .font(.body.weight(.medium))
-                Text("In: \(TokenFormat.compact(inputTokens))  ·  Out: \(TokenFormat.compact(outputTokens))")
+                Text(breakdown)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .monoDigits()
@@ -29,8 +28,20 @@ struct ModelRow: View {
         }
     }
 
+    /// Cache reads and writes sit alongside the billable columns rather than in
+    /// them: they run two orders of magnitude larger, so folding them in would
+    /// leave every row reading as its context size.
+    private var breakdown: String {
+        var parts = [
+            "In: \(TokenFormat.compact(usage.input))",
+            "Out: \(TokenFormat.compact(usage.output))"
+        ]
+        let cache = usage.cacheRead + usage.cacheCreation
+        if cache > 0 { parts.append("Cache: \(TokenFormat.compact(cache))") }
+        return parts.joined(separator: "  ·  ")
+    }
+
     private var formattedPercent: String {
-        if percent >= 10 { return String(format: "%.1f", percent) }
-        return String(format: "%.1f", percent)
+        String(format: "%.1f", percent)
     }
 }

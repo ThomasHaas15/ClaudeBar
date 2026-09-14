@@ -25,10 +25,14 @@ enum TokenFormat {
     static func compact(_ tokens: Int) -> String {
         let n = Double(tokens)
         switch tokens {
-        case 0..<1_000:           return "\(tokens)"
-        case 1_000..<1_000_000:   return String(format: "%.0fk", n / 1_000)
-        case 1_000_000..<10_000_000:  return String(format: "%.1fM", n / 1_000_000)
-        default:                  return String(format: "%.0fM", n / 1_000_000)
+        case ..<1_000:                        return "\(tokens)"
+        case 1_000..<1_000_000:               return String(format: "%.0fk", n / 1_000)
+        case 1_000_000..<10_000_000:          return String(format: "%.1fM", n / 1_000_000)
+        case 10_000_000..<1_000_000_000:      return String(format: "%.0fM", n / 1_000_000)
+        // Cache reads reach this range within weeks; "4980M" is not a number
+        // anyone reads at a glance.
+        case 1_000_000_000..<10_000_000_000:  return String(format: "%.1fB", n / 1_000_000_000)
+        default:                              return String(format: "%.0fB", n / 1_000_000_000)
         }
     }
 }

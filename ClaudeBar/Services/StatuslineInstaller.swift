@@ -15,8 +15,17 @@ final class StatuslineInstaller {
 
     private init() { refresh() }
 
+    /// The relay Claude Code runs on every prompt. It is the app's only source
+    /// of rate-limit data: Claude Code keeps the unified window percentages in
+    /// memory and hands them to the status line, and writes them nowhere else.
+    ///
+    /// The version marker in its header is bumped whenever the payload it reads
+    /// changes shape — `refresh()` rewrites an older copy in place, because a
+    /// relay installed by a previous version of ClaudeBar keeps running against
+    /// the new Claude Code until someone replaces it.
     static let scriptBody = #"""
     #!/bin/sh
+    # claudebar-statusline v2 — managed by ClaudeBar, replaced on upgrade.
     INPUT=$(cat)
     INPUT="$INPUT" /usr/bin/python3 - <<'PY'
     import json, os, sys
@@ -26,28 +35,31 @@ final class StatuslineInstaller {
     except Exception:
         sys.exit(0)
     rl = d.get("rate_limits") or {}
-    home = os.path.expanduser("~/.claude")
+    home = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
     os.makedirs(home, exist_ok=True)
     out = os.path.join(home, "rate-limits.json")
     tmp = out + ".tmp"
     with open(tmp, "w") as f:
         json.dump(rl, f)
     os.replace(tmp, out)
-    fh = rl.get("five_hour") or {}
-    sd = rl.get("seven_day") or {}
-    parts = []
+
     def pct(b):
-        if not b: return None
-        if "used_percentage" in b: return int(b["used_percentage"])
+        if not b:
+            return None
+        # Claude Code sends used_percentage (0-100); older builds sent
+        # utilization, as a fraction on some versions and a percentage on others.
+        if "used_percentage" in b:
+            return int(b["used_percentage"])
         if "utilization" in b:
             u = b["utilization"]
             return int(u * 100) if u <= 1.0 else int(u)
         return None
-    fp = pct(fh); sp = pct(sd)
-    if fp is not None:
-        parts.append("5h:%d%%" % fp)
-    if sp is not None:
-        parts.append("7d:%d%%" % sp)
+
+    parts = []
+    for key, label in (("five_hour", "5h"), ("seven_day", "7d"), ("spend_limit", "$")):
+        p = pct(rl.get(key))
+        if p is not None:
+            parts.append("%s:%d%%" % (label, p))
     print(" ".join(parts))
     PY
     """#
@@ -61,12 +73,33 @@ final class StatuslineInstaller {
         let pointsToOurs = configured?.contains("claudebar-statusline.sh") == true
 
         if pointsToOurs && scriptExists {
+            upgradeScriptIfStale()
             state = .installed
         } else if let cmd = configured, !cmd.isEmpty, !pointsToOurs {
             state = .foreignStatusline(command: cmd)
         } else {
             state = .notInstalled
         }
+    }
+
+    /// Replaces a relay left behind by an older ClaudeBar. Without this the
+    /// script installed once keeps running forever against a Claude Code that
+    /// has moved on — the v1 relay read `rate_limits.five_hour.utilization`,
+    /// which current versions no longer send, so it wrote the file the app
+    /// reads but showed `5h:0%` in the terminal.
+    ///
+    /// Only ever rewrites a file this app is already the configured owner of,
+    /// and only when its contents differ from the current relay.
+    @discardableResult
+    func upgradeScriptIfStale(at url: URL = ClaudePaths.statuslineScript) -> Bool {
+        guard let onDisk = try? String(contentsOf: url, encoding: .utf8), onDisk != Self.scriptBody else {
+            return false
+        }
+        guard (try? Self.scriptBody.write(to: url, atomically: true, encoding: .utf8)) != nil else {
+            return false
+        }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return true
     }
 
     func install() throws {

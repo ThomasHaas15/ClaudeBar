@@ -233,4 +233,51 @@ struct RateLimitsTests {
         let decoded = try JSONDecoder().decode(RateLimits.self, from: data)
         #expect(decoded == original)
     }
+
+    /// Claude Code sends this window only for sessions behind a Claude apps
+    /// gateway with a spend cap. It reaches the app through the same relay as
+    /// the rest, and it is a real ceiling, so it colours the menu bar dot.
+    @Test func decodesTheGatewaySpendLimit() throws {
+        let json = """
+        {"five_hour":{"used_percentage":12,"resets_at":1789425600},
+         "spend_limit":{"used_percentage":93,"resets_at":1791000000}}
+        """
+        let limits = try JSONDecoder().decode(RateLimits.self, from: json.data(using: .utf8)!)
+        #expect(limits.spendLimit?.percent == 93)
+        #expect(limits.maxRatio == 0.93)
+        #expect(limits.hasAny)
+    }
+
+    /// A spend limit is a billing period, not a rolling window: nothing local
+    /// can say when the next one starts or what it starts at, so the last known
+    /// reading stands until Claude Code reports again.
+    @Test func doesNotRollOverTheSpendLimit() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let limits = RateLimits(
+            spendLimit: .init(usedPercentage: 93, resetsAt: now.addingTimeInterval(-3600))
+        )
+        #expect(limits.rolledOver(now: now).spendLimit?.percent == 93)
+    }
+
+    @Test func carriesTheSpendLimitThroughMergeAndEncoding() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let cache = RateLimits(spendLimit: .init(usedPercentage: 40, resetsAt: now))
+        let fresh = RateLimits(fiveHour: .init(usedPercentage: 3, resetsAt: now))
+        let merged = fresh.merging(cache: cache)
+        #expect(merged.spendLimit?.percent == 40)
+
+        let decoded = try JSONDecoder().decode(RateLimits.self, from: JSONEncoder().encode(merged))
+        #expect(decoded == merged)
+    }
+
+    /// Windows Claude Code no longer sends must not start showing up empty —
+    /// a row for a limit the account does not have is worse than no row.
+    @Test func absentWindowsStayAbsent() throws {
+        let json = #"{"five_hour":{"used_percentage":12,"resets_at":1789425600}}"#
+        let limits = try JSONDecoder().decode(RateLimits.self, from: json.data(using: .utf8)!)
+        #expect(limits.sevenDay == nil)
+        #expect(limits.sevenDayOpus == nil)
+        #expect(limits.sevenDaySonnet == nil)
+        #expect(limits.spendLimit == nil)
+    }
 }

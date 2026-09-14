@@ -22,8 +22,8 @@ A macOS menu bar app that surfaces **Claude Code** usage at a glance — session
 - **Live rate limits** — Session (5-hour) and Week (all models) percentages with reset times, refreshed on every Claude Code prompt
 - **Header at a glance** — today's tokens, weekly-limit delta since midnight, current streak
 - **Stats** — total sessions, total tokens, current and longest streak, longest session duration, 30-day activity heatmap
-- **Models** — per-model token share with input/output breakdown and a favorite-model summary
-- **Status** — Claude Code version, session activity ("2 working, 2 idle"), active session count, launch-at-login toggle, statusline installer
+- **Models** — per-model token share with input/output/cache breakdown and a favorite-model summary. Model names are derived from the id's shape, so a model released after this build still reads as "Opus 6" rather than as a raw id
+- **Status** — Claude Code version, session activity ("2 working, 1 waiting, 1 idle"), running session count, launch-at-login toggle, statusline installer
 - **Threshold notifications** — fires at 80% and 100% of session and weekly limits, once per reset window
 - **Visual indicator in the menu bar** — sparkle glyph picks up a colored dot when any limit goes warning (yellow ≥ 80%) or critical (red = 100%)
 - **No credentials, no network** — reads only local files under `~/.claude/`
@@ -89,16 +89,31 @@ ClaudeBar's relay is a small `sh` + `python3` script that:
 
 ClaudeBar watches `rate-limits.json` with a `DispatchSource` vnode source and refreshes the popover within milliseconds. No keys, no API calls, no recurring cost.
 
-> **Note:** The statusline payload only contains `five_hour` and `seven_day`. Per-model breakdowns (`seven_day_sonnet`, `seven_day_opus`) are tracked internally by Claude Code but not exposed through the statusline contract, so ClaudeBar deliberately does not show them — better to omit a number than to show a stale or guessed one.
+> **Note:** The statusline payload carries `five_hour`, `seven_day`, and — only for sessions behind a Claude apps gateway with a spend cap — `spend_limit`. Per-model weekly windows (`seven_day_sonnet`, `seven_day_opus`) are tracked internally by Claude Code but not exposed through the statusline contract, so ClaudeBar deliberately does not show them — better to omit a number than to show a stale or guessed one. A row appears only for a window that actually arrives.
+
+The relay is versioned. Claude Code has changed the payload before — it used to send `utilization` as a fraction where it now sends `used_percentage` — so ClaudeBar rewrites a relay left behind by an older version of itself the next time you open the popover. Nothing to reinstall.
 
 ## Data sources
 
+ClaudeBar reads `~/.claude` — or `$CLAUDE_CONFIG_DIR`, if you point Claude Code somewhere else.
+
 | File | Tab | Notes |
 |---|---|---|
-| `~/.claude/stats-cache.json` | Stats, Models | Totals, daily activity, per-model usage. Recomputed by Claude Code in the background. |
-| `~/.claude/projects/*/*.jsonl` | Stats header | Live overlay scan of session logs newer than the cache, so today's tokens appear before Claude Code re-aggregates. |
+| `~/.claude/stats-cache.json` | Stats, Models | Lifetime totals, daily activity, per-model usage — up to the day it was last computed. |
+| `~/.claude/projects/**/*.jsonl` | Header, Stats, Models | Live scan of the session logs, covering every day the cache does not. This is what makes the numbers move. |
 | `~/.claude/rate-limits.json` | Usage | Written by the statusline relay (see above). |
-| `~/.claude/sessions/*.json` | Status | Active sessions: pid, version, busy/idle. |
+| `~/.claude/sessions/*.json` | Status | Running sessions: pid, version, and what each one is doing. |
+
+### Why the live scan carries the weight
+
+`stats-cache.json` is the cache behind Claude Code's own `/usage` screen, and it is **only recomputed when you open that screen** — and even then it stops at yesterday, because the dialog recomputes today from the transcripts. A machine whose owner never runs `/usage` has a stats cache frozen on the day they last did.
+
+So ClaudeBar treats it as history, not as a feed: the cache covers everything up to its `lastComputedDate`, and the scanner counts everything after it, straight from the session logs. Days, sessions, messages, tool calls and per-model tokens are all counted the way Claude Code counts them, so the two halves add up. The scan is incremental — an append-only log is resumed from the byte offset the last scan stopped at — and costs milliseconds once warm.
+
+Two consequences worth knowing:
+
+- **Tokens mean input + output.** Cache reads and writes are two orders of magnitude larger and would turn every figure into a measure of context size, so they are counted separately and shown per model in the Models tab.
+- **Claude Code prunes old transcripts** (`cleanupPeriodDays`, 30 days by default). History older than that survives only in whatever the stats cache already absorbed.
 
 ## Development
 
@@ -117,7 +132,7 @@ xcodebuild -project ClaudeBar.xcodeproj -scheme ClaudeBar -configuration Debug t
 
 - `ClaudeBar/ClaudeBarApp.swift` — app entry, `MenuBarExtra` wiring
 - `ClaudeBar/Views/` — popover, header, tab bar, four tab views, reusable components
-- `ClaudeBar/Services/` — file readers (`StatsCache`, `RateLimits`, `Sessions`), `ClaudeFileWatcher`, `StatuslineInstaller`, `LoginItem`, `ThresholdTracker`, `NotificationCoordinator`, `LiveStats`
+- `ClaudeBar/Services/` — file readers (`StatsCache`, `RateLimits`, `Sessions`), `ClaudeFileWatcher`, `StatuslineInstaller`, `LoginItem`, `ThresholdTracker`, `NotificationCoordinator`, `LiveStats`, `ModelNames`
 - `ClaudeBar/DesignSystem/` — `Theme`, `ViewModifiers`
 
 ## License

@@ -4,10 +4,11 @@ struct ModelsTab: View {
     @Environment(StatsStore.self) private var stats
 
     var body: some View {
+        let merged = stats.merged
         VStack(alignment: .leading, spacing: Theme.sectionSpacing) {
             SectionHeader(title: "Token Share · All Time")
-            if stats.cache != nil || !stats.live.modelInputOutput.isEmpty {
-                let entries = makeEntries(stats.merged.modelTotals)
+            if merged.hasData {
+                let entries = makeEntries(merged.modelTotals)
                 if entries.isEmpty {
                     Text("No model usage recorded.")
                         .font(.callout)
@@ -18,8 +19,7 @@ struct ModelsTab: View {
                             ModelRow(
                                 displayName: entry.displayName,
                                 percent: entry.percent,
-                                inputTokens: entry.input,
-                                outputTokens: entry.output,
+                                usage: entry.usage,
                                 dotColor: entry.color
                             )
                             if entry.id != entries.last?.id {
@@ -51,48 +51,27 @@ struct ModelsTab: View {
     private struct Entry: Identifiable {
         let id: String
         let displayName: String
-        let input: Int
-        let output: Int
+        let usage: TokenUsage
         let percent: Double
         let color: Color
     }
 
-    private func makeEntries(_ usage: [String: TokenPair]) -> [Entry] {
-        let filtered = usage.filter { ModelNames.isUserFacing(id: $0.key) }
-        let totalOutput = filtered.values.reduce(0) { $0 + $1.output }
+    private func makeEntries(_ usage: [String: TokenUsage]) -> [Entry] {
+        let filtered = usage.filter { ModelNames.isUserFacing(id: $0.key) && $0.value.billable > 0 }
+        // Share of the tokens the app counts everywhere else, so the rows add
+        // up to the Stats tab's total rather than to a column of it.
+        let total = filtered.values.reduce(0) { $0 + $1.billable }
         let palette: [Color] = [.blue, .green, .orange, .gray, .purple, .pink, .yellow, .red]
-        let sorted = filtered.sorted { $0.value.output > $1.value.output }
+        let sorted = filtered.sorted { $0.value.billable > $1.value.billable }
         return sorted.enumerated().map { idx, kv in
-            let pct = totalOutput > 0 ? Double(kv.value.output) / Double(totalOutput) * 100 : 0
+            let pct = total > 0 ? Double(kv.value.billable) / Double(total) * 100 : 0
             return Entry(
                 id: kv.key,
                 displayName: ModelNames.display(for: kv.key),
-                input: kv.value.input,
-                output: kv.value.output,
+                usage: kv.value,
                 percent: pct,
                 color: palette[idx % palette.count]
             )
         }
-    }
-}
-
-enum ModelNames {
-    static func isUserFacing(id: String) -> Bool {
-        let lowered = id.lowercased()
-        if lowered == "<synthetic>" || lowered.contains("synthetic") { return false }
-        return true
-    }
-
-    static func display(for id: String) -> String {
-        let lowered = id.lowercased()
-        if lowered.contains("opus-4-7") { return "Opus 4.7" }
-        if lowered.contains("opus-4-6") { return "Opus 4.6" }
-        if lowered.contains("opus-4-1") { return "Opus 4.1" }
-        if lowered.contains("opus") { return "Opus" }
-        if lowered.contains("sonnet-4-6") { return "Sonnet 4.6" }
-        if lowered.contains("sonnet") { return "Sonnet" }
-        if lowered.contains("haiku-4-5") { return "Haiku 4.5" }
-        if lowered.contains("haiku") { return "Haiku" }
-        return id
     }
 }

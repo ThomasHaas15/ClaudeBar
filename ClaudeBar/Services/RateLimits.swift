@@ -1,10 +1,33 @@
 import Foundation
 
+/// The `rate_limits` block of Claude Code's status-line payload, relayed to
+/// `~/.claude/rate-limits.json` by the script `StatuslineInstaller` installs.
+///
+/// Current Claude Code sends `five_hour`, `seven_day`, and — only for sessions
+/// behind a Claude apps gateway with a spend cap — `spend_limit`. The per-model
+/// weekly windows are kept because older versions sent them and because the
+/// `/usage` endpoint still tracks them; they simply never arrive from a recent
+/// Claude Code, and a row is only shown for a window that does.
 struct RateLimits: Codable, Equatable {
     let fiveHour: Limit?
     let sevenDay: Limit?
     let sevenDayOpus: Limit?
     let sevenDaySonnet: Limit?
+    let spendLimit: Limit?
+
+    init(
+        fiveHour: Limit? = nil,
+        sevenDay: Limit? = nil,
+        sevenDayOpus: Limit? = nil,
+        sevenDaySonnet: Limit? = nil,
+        spendLimit: Limit? = nil
+    ) {
+        self.fiveHour = fiveHour
+        self.sevenDay = sevenDay
+        self.sevenDayOpus = sevenDayOpus
+        self.sevenDaySonnet = sevenDaySonnet
+        self.spendLimit = spendLimit
+    }
 
     struct Limit: Codable, Equatable {
         let usedPercentage: Double
@@ -64,16 +87,15 @@ struct RateLimits: Codable, Equatable {
         case sevenDay = "seven_day"
         case sevenDayOpus = "seven_day_opus"
         case sevenDaySonnet = "seven_day_sonnet"
+        case spendLimit = "spend_limit"
     }
 
-    var hasAny: Bool {
-        fiveHour != nil || sevenDay != nil || sevenDayOpus != nil || sevenDaySonnet != nil
-    }
+    private var all: [Limit?] { [fiveHour, sevenDay, sevenDayOpus, sevenDaySonnet, spendLimit] }
+
+    var hasAny: Bool { all.contains { $0 != nil } }
 
     var maxRatio: Double {
-        [fiveHour, sevenDay, sevenDayOpus, sevenDaySonnet]
-            .compactMap { $0?.ratio }
-            .max() ?? 0
+        all.compactMap { $0?.ratio }.max() ?? 0
     }
 
     func limit(for kind: LimitKind) -> Limit? {
@@ -88,8 +110,7 @@ struct RateLimits: Codable, Equatable {
     /// The earliest reset still ahead of `now` — the next moment the display
     /// changes on its own, with no file write to trigger it.
     func nextReset(after now: Date = Date()) -> Date? {
-        [fiveHour, sevenDay, sevenDayOpus, sevenDaySonnet]
-            .compactMap { $0?.resetsAt }
+        all.compactMap { $0?.resetsAt }
             .filter { $0 > now }
             .min()
     }
@@ -110,7 +131,8 @@ struct RateLimits: Codable, Equatable {
             fiveHour:       fiveHour       ?? cache?.fiveHour,
             sevenDay:       sevenDay       ?? cache?.sevenDay,
             sevenDayOpus:   sevenDayOpus   ?? cache?.sevenDayOpus,
-            sevenDaySonnet: sevenDaySonnet ?? cache?.sevenDaySonnet
+            sevenDaySonnet: sevenDaySonnet ?? cache?.sevenDaySonnet,
+            spendLimit:     spendLimit     ?? cache?.spendLimit
         )
     }
 
@@ -129,12 +151,16 @@ struct RateLimits: Codable, Equatable {
     /// - A session window only begins when the next request is made, so its
     ///   reset time is genuinely unknown. Leave it in the past, which is what
     ///   the Usage tab keys "Resets after next request" off.
+    /// - Note: the spend limit is left exactly as it was read. It is a billing
+    ///   period, not a rolling window, so nothing here can say when the next one
+    ///   starts or what it starts at.
     func rolledOver(now: Date = Date()) -> RateLimits {
         RateLimits(
             fiveHour:       Self.rollSession(fiveHour, now: now),
             sevenDay:       Self.rollWeekly(sevenDay, now: now),
             sevenDayOpus:   Self.rollWeekly(sevenDayOpus, now: now),
-            sevenDaySonnet: Self.rollWeekly(sevenDaySonnet, now: now)
+            sevenDaySonnet: Self.rollWeekly(sevenDaySonnet, now: now),
+            spendLimit:     spendLimit
         )
     }
 

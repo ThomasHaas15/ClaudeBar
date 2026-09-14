@@ -4,24 +4,32 @@ struct StatsTab: View {
     @Environment(StatsStore.self) private var stats
 
     var body: some View {
+        let merged = stats.merged
         VStack(alignment: .leading, spacing: Theme.sectionSpacing) {
-            cards
-            if let cache = stats.cache {
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(title: "Activity · Last 30 days")
-                    HeatmapGrid(dailyActivity: cache.dailyActivity)
+            cards(merged)
+            // Driven by the merged view, not the stats cache: that file is
+            // rewritten only when someone opens `/usage` in Claude Code, so a
+            // heatmap fed from it alone stops moving the day you stop opening
+            // the dialog — and never starts for anyone who never has.
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(title: "Activity · Last 30 days")
+                if merged.hasData {
+                    HeatmapGrid(dailyActivity: merged.dailyActivity)
+                } else {
+                    Text("No activity recorded yet.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private var cards: some View {
-        let merged = stats.merged
+    private func cards(_ merged: MergedStats) -> some View {
         let totalSessions = merged.totalSessions
         let totalTokens = merged.totalTokens
         let dates = merged.allActiveDates
-        let currentStreak = StreakCalculator.current(from: dates)
+        let currentStreak = StreakCalculator.current(from: dates, today: stats.today)
         let longestStreak = StreakCalculator.longest(from: dates)
         let longest = stats.cache?.longestSession
         let activeInWindow = activeDaysInLast(30, from: dates)
@@ -36,7 +44,7 @@ struct StatsTab: View {
                 StatCard(
                     title: "Total tokens",
                     value: TokenFormat.compact(totalTokens),
-                    subtitle: nil
+                    subtitle: "input + output"
                 )
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -61,7 +69,7 @@ struct StatsTab: View {
         let f = DateFormatter()
         f.calendar = cal
         f.dateFormat = "yyyy-MM-dd"
-        let today = cal.startOfDay(for: Date())
+        let today = cal.startOfDay(for: stats.today)
         var window: Set<String> = []
         for i in 0..<days {
             if let d = cal.date(byAdding: .day, value: -i, to: today) {

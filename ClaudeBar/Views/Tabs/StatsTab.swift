@@ -14,7 +14,7 @@ struct StatsTab: View {
             VStack(alignment: .leading, spacing: 8) {
                 SectionHeader(title: "Activity · Last 30 days")
                 if merged.hasData {
-                    HeatmapGrid(dailyActivity: merged.dailyActivity)
+                    HeatmapGrid(dailyActivity: merged.dailyActivity, dailyTokens: merged.dailyTokens)
                 } else {
                     Text("No activity recorded yet.")
                         .font(.callout)

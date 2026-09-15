@@ -9,6 +9,7 @@ struct ClaudeBarApp: App {
 
     init() {
         ClaudeFileWatcher.shared.start()
+        Updater.shared.start()
         let limits = RateLimitsStore()
         _rateLimits = State(initialValue: limits)
         _notifications = State(initialValue: NotificationCoordinator(store: limits))

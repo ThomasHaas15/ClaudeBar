@@ -12,9 +12,11 @@ BUILT_APP    := $(BUILD_DIR)/Build/Products/$(CONFIG)/$(APP_NAME)
 DIST_APP     := $(DIST_DIR)/$(APP_NAME)
 INSTALL_DIR  := /Applications
 INSTALL_APP  := $(INSTALL_DIR)/$(APP_NAME)
-VERSION      := $(shell /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ClaudeBar/Info.plist 2>/dev/null || echo 0.0.0)
+# Info.plist now carries $(MARKETING_VERSION) rather than a literal, so the
+# version lives in project.yml and nowhere else.
+VERSION      := $(shell sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' project.yml)
 
-.PHONY: all generate build sign package install reinstall launch stop clean help
+.PHONY: all generate build sign package install reinstall launch stop clean help tag
 
 all: install
 
@@ -27,6 +29,7 @@ help:
 	@echo "  make reinstall   Alias for install"
 	@echo "  make launch      open $(INSTALL_APP)"
 	@echo "  make stop        Quit any running copies"
+	@echo "  make tag V=0.2.0 Bump project.yml, commit, tag and push; CI publishes the release"
 	@echo "  make clean       Remove build/ and dist/"
 
 generate:
@@ -59,7 +62,8 @@ stop:
 install: build stop
 	rm -rf "$(INSTALL_APP)"
 	cp -R "$(BUILT_APP)" "$(INSTALL_APP)"
-	-xattr -dr com.apple.quarantine "$(INSTALL_APP)" 2>/dev/null
+	@# xattr has no recursive flag; -dr exits 64 and removes nothing.
+	@find "$(INSTALL_APP)" -print0 | xargs -0 xattr -d com.apple.quarantine 2>/dev/null || true
 	open "$(INSTALL_APP)"
 	@echo "Installed + launched: $(INSTALL_APP)"
 
@@ -67,6 +71,19 @@ reinstall: install
 
 launch:
 	open "$(INSTALL_APP)"
+
+# Cuts a release. The build itself happens in CI on the pushed tag; this just
+# makes sure the version in project.yml and the tag agree, which is what the
+# release workflow checks and what the updater compares against.
+tag:
+	@test -n "$(V)" || { echo "usage: make tag V=0.2.0"; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty"; exit 1; }
+	sed -i '' 's/^\( *MARKETING_VERSION: *\).*/\1"$(V)"/' project.yml
+	git add project.yml
+	git commit -m "Release $(V)"
+	git tag -a v$(V) -m "v$(V)"
+	git push origin HEAD --follow-tags
+	@echo "Pushed v$(V) — watch: gh run watch"
 
 clean:
 	rm -rf $(BUILD_DIR) $(DIST_DIR)

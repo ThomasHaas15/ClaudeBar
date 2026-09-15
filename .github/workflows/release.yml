@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Read version from tag
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          DECLARED=$(sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' project.yml)
+          if [ "$VERSION" != "$DECLARED" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match MARKETING_VERSION $DECLARED in project.yml."
+            echo "::error::Cut releases with 'make tag V=$VERSION', which keeps the two in step."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Test
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ClaudeBar.xcodeproj \
+            -scheme ClaudeBar \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ClaudeBar.xcodeproj \
+            -scheme ClaudeBar \
+            -configuration Release \
+            -derivedDataPath build \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Sign
+        run: |
+          set -euo pipefail
+          codesign --force --deep --sign - \
+            --entitlements ClaudeBar/ClaudeBar.entitlements \
+            build/Build/Products/Release/ClaudeBar.app
+          # The updater runs this same check on the download before it deletes
+          # the copy it is replacing, so a failure here has to stop the release.
+          codesign --verify --strict build/Build/Products/Release/ClaudeBar.app
+
+      - name: Verify the built version matches the tag
+        run: |
+          set -euo pipefail
+          BUILT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+            build/Build/Products/Release/ClaudeBar.app/Contents/Info.plist)
+          if [ "$BUILT" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::Built app reports $BUILT, tag says ${{ steps.version.outputs.version }}."
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ditto -c -k --keepParent --sequesterRsrc \
+            build/Build/Products/Release/ClaudeBar.app \
+            "dist/ClaudeBar-${{ steps.version.outputs.version }}.zip"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/ClaudeBar-${{ steps.version.outputs.version }}.zip" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

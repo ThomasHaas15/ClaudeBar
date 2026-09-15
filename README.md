@@ -4,7 +4,7 @@
 [![Swift 6](https://img.shields.io/badge/Swift-6-orange.svg)](https://swift.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%2015-blue.svg)](https://developer.apple.com)
 
-A macOS menu bar app that surfaces **Claude Code** usage at a glance — session and weekly rate limits, daily and lifetime token stats, per-model breakdown, and active sessions. Posts a system notification when any limit crosses 80% or 100%. Local data only; no network calls, no credentials.
+A macOS menu bar app that surfaces **Claude Code** usage at a glance — session and weekly rate limits, daily and lifetime token stats, per-model breakdown, and active sessions. Posts a system notification when any limit crosses 80% or 100%. Local data only, no credentials — its one network call is an hourly check for its own updates, which you can turn off.
 
 <table>
   <tr>
@@ -26,7 +26,8 @@ A macOS menu bar app that surfaces **Claude Code** usage at a glance — session
 - **Status** — Claude Code version, session activity ("2 working, 1 waiting, 1 idle"), running session count, launch-at-login toggle, statusline installer
 - **Threshold notifications** — fires at 80% and 100% of session and weekly limits, once per reset window
 - **Visual indicator in the menu bar** — sparkle glyph picks up a colored dot when any limit goes warning (yellow ≥ 80%) or critical (red = 100%)
-- **No credentials, no network** — reads only local files under `~/.claude/`, and writes only its own day-by-day record
+- **No credentials** — reads only local files under `~/.claude/`, and writes only its own day-by-day record
+- **Updates itself** — checks this repo's releases hourly, installs a newer one and restarts, all without interrupting you
 - **Live file watching** — `DispatchSource` vnode events push updates the moment Claude Code writes data
 
 ## Quota Status Thresholds
@@ -55,6 +56,28 @@ make install
 ```
 
 Builds a Release copy, quits any running instance, copies the app to `/Applications/ClaudeBar.app`, and launches it. Run `make help` for other targets (`generate`, `build`, `package`, `clean`, ...).
+
+## Updates
+
+ClaudeBar keeps itself current. Half a minute after launch and hourly after that, it asks GitHub for this repo's latest release; if the tag is newer than the running build it downloads the `.zip`, replaces the installed bundle, and restarts itself. Nothing to click, and no window appears.
+
+The check parks itself until the Mac has a network rather than failing on a closed lid, so a laptop that spent the hour asleep still gets its update on the next wake.
+
+Before anything is deleted, the downloaded bundle has to be ClaudeBar, carry the version its tag promised, and pass `codesign --verify`. The swap then copies the new app into `/Applications` alongside the old one and exchanges them with two renames, so the moment where `ClaudeBar.app` doesn't exist is microseconds long rather than the length of a copy, and the old copy is kept aside until the new one is in place. Whenever the swap gives up it puts the old app back and starts it — the one outcome worth ruling out is a Mac left with no ClaudeBar at all. Because the app fetches the archive itself it never picks up a quarantine flag, so Gatekeeper has nothing to object to.
+
+The **Status** tab carries the switch, the installed version, and a **Check now** button. With automatic updates off, a manual check reports what's available and waits for you to press **Install and restart**.
+
+Debug builds never update themselves — replacing the bundle under someone mid-edit would be a strange thing to do.
+
+## Releasing
+
+```sh
+make tag V=0.2.0
+```
+
+Bumps `MARKETING_VERSION` in `project.yml`, commits, tags `v0.2.0`, and pushes. [`release.yml`](.github/workflows/release.yml) picks up the tag, runs the tests, builds and ad-hoc signs a Release copy, checks the built app's version against the tag, and publishes a GitHub release with `ClaudeBar-0.2.0.zip` attached. Installed copies pick it up within the hour.
+
+The version lives in `project.yml` and nowhere else — `Info.plist` carries `$(MARKETING_VERSION)` rather than a literal. A tag that disagrees with `project.yml` fails the release rather than shipping a build that lies about its version, which the updater would then try to install on a loop.
 
 ## First-run setup
 
@@ -151,7 +174,7 @@ xcodebuild -project ClaudeBar.xcodeproj -scheme ClaudeBar -configuration Debug t
 
 - `ClaudeBar/ClaudeBarApp.swift` — app entry, `MenuBarExtra` wiring
 - `ClaudeBar/Views/` — popover, header, tab bar, four tab views, reusable components
-- `ClaudeBar/Services/` — file readers (`StatsCache`, `RateLimits`, `Sessions`), `ClaudeFileWatcher`, `StatuslineInstaller`, `LoginItem`, `ThresholdTracker`, `NotificationCoordinator`, `LiveStats`, `ModelNames`
+- `ClaudeBar/Services/` — file readers (`StatsCache`, `RateLimits`, `Sessions`), `ClaudeFileWatcher`, `StatuslineInstaller`, `LoginItem`, `ThresholdTracker`, `NotificationCoordinator`, `LiveStats`, `ModelNames`, `Updater`
 - `ClaudeBar/DesignSystem/` — `Theme`, `ViewModifiers`
 
 ## License

@@ -28,6 +28,8 @@ targets:
         LSUIElement: true
         CFBundleDisplayName: ClaudeBar
         CFBundleName: ClaudeBar
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSHumanReadableCopyright: "© 2026 Thomas Haas"
         NSSupportsAutomaticTermination: true
         NSSupportsSuddenTermination: true

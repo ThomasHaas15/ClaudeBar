@@ -24,13 +24,15 @@ struct TokenUsage: Equatable, Sendable {
     }
 }
 
-/// One day's worth of what the on-disk stats cache calls `dailyActivity`,
-/// counted the way Claude Code counts it so the two can be added together.
-struct DayActivity: Equatable, Sendable {
+/// One day's work, counted the way Claude Code counts it so that the app's
+/// figures and the stats cache's can be held against each other.
+struct DayActivity: Equatable, Sendable, Codable {
     var messages: Int = 0
     var sessions: Int = 0
     var toolCalls: Int = 0
     var tokens: Int = 0
+
+    var isEmpty: Bool { messages == 0 && sessions == 0 && toolCalls == 0 && tokens == 0 }
 
     static func + (lhs: Self, rhs: Self) -> Self {
         DayActivity(
@@ -40,22 +42,71 @@ struct DayActivity: Equatable, Sendable {
             tokens: lhs.tokens + rhs.tokens
         )
     }
+
+    /// Field by field, the larger of the two. What a merge of two partial
+    /// observations of the same day wants — see `ActivityHistory`.
+    static func max(_ lhs: Self, rhs: Self) -> Self {
+        DayActivity(
+            messages: Swift.max(lhs.messages, rhs.messages),
+            sessions: Swift.max(lhs.sessions, rhs.sessions),
+            toolCalls: Swift.max(lhs.toolCalls, rhs.toolCalls),
+            tokens: Swift.max(lhs.tokens, rhs.tokens)
+        )
+    }
+
+    /// Hand-rolled so that a record written by an older build, or one that
+    /// gains a field later, still reads rather than throwing the whole file
+    /// away.
+    init(messages: Int = 0, sessions: Int = 0, toolCalls: Int = 0, tokens: Int = 0) {
+        self.messages = messages
+        self.sessions = sessions
+        self.toolCalls = toolCalls
+        self.tokens = tokens
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        messages = try c.decodeIfPresent(Int.self, forKey: .messages) ?? 0
+        sessions = try c.decodeIfPresent(Int.self, forKey: .sessions) ?? 0
+        toolCalls = try c.decodeIfPresent(Int.self, forKey: .toolCalls) ?? 0
+        tokens = try c.decodeIfPresent(Int.self, forKey: .tokens) ?? 0
+    }
 }
 
 struct LiveStats: Equatable, Sendable {
+    /// Every day the transcripts still on disk cover, whether or not the stats
+    /// cache covers it too.
+    ///
+    /// Deliberately not bounded by the cache's watermark. The cache is a
+    /// lifetime ledger that moves only when someone opens `/usage`, and its
+    /// per-day token figure counts cache reads and writes besides — so the app
+    /// keeps its own day-by-day record and the cache only fills the gaps. What
+    /// *is* bounded by the watermark is below, because those are the numbers
+    /// added to the cache's own totals.
     var days: [String: DayActivity] = [:]
+
+    /// Per-model usage over the span the cache does not cover.
     var modelUsage: [String: TokenUsage] = [:]
 
-    var messageCount: Int { days.values.reduce(0) { $0 + $1.messages } }
-    var sessionCount: Int { days.values.reduce(0) { $0 + $1.sessions } }
+    /// Messages and sessions from after the cache's watermark — what its
+    /// lifetime totals are missing, and all that may be added to them without
+    /// counting the same work twice.
+    var newMessages: Int = 0
+    var newSessions: Int = 0
+
     var activeDates: Set<String> { Set(days.keys) }
 }
 
-/// Rolls up the usage Claude Code appends to `~/.claude/projects/**.jsonl` over
-/// the span the on-disk stats cache does not cover yet.
+/// Rolls up the usage Claude Code appends to `~/.claude/projects/**.jsonl`.
 ///
-/// That span is usually months, not minutes. `~/.claude/stats-cache.json` is
-/// recomputed only when someone opens `/usage` in Claude Code — it is that
+/// It reads the logs for two different spans at once. Totals — messages,
+/// sessions, per-model tokens — cover only what the on-disk stats cache does
+/// not, because they are added to it. Per-day *tokens* cover every log still on
+/// disk, cache or no cache, because the cache's own per-day figure counts
+/// something else entirely (see `LiveStats.dayTokens`).
+///
+/// The cache's span is usually months, not minutes. `~/.claude/stats-cache.json`
+/// is recomputed only when someone opens `/usage` in Claude Code — it is that
 /// dialog's cache, not a running log — and even then it stops at *yesterday*,
 /// because the dialog always recomputes today from the transcripts. So this
 /// scanner, not the cache, is what makes the app's numbers move: everything
@@ -64,8 +115,9 @@ struct LiveStats: Equatable, Sendable {
 /// Session logs are append-only, so a rescan reads only what was added since
 /// the last one: each file's tally is kept alongside the size and mtime it was
 /// computed at, and a file that merely grew resumes from the byte offset the
-/// previous scan stopped on. Re-parsing the whole span instead costs well over
-/// a gigabyte of JSON per scan once the cache is a few weeks stale.
+/// previous scan stopped on. Only the first scan of a session pays for the
+/// whole corpus, and that is bounded by Claude Code's own retention —
+/// `cleanupPeriodDays`, thirty by default — not by how stale the cache is.
 ///
 /// An actor rather than free functions because that state has to be serialised:
 /// the watcher can ask for a rescan far faster than one completes.
@@ -115,9 +167,13 @@ actor LiveStatsScanner {
         iso.formatOptions = [.withInternetDateTime]
     }
 
-    /// Counts everything recorded after `cutoff`, a `yyyy-MM-dd` day in UTC —
-    /// the stats cache's `lastComputedDate`, which covers every day up to and
-    /// including itself. Nil counts everything.
+    /// Counts everything the transcripts hold, and separately counts the part
+    /// of it recorded after `cutoff` — a `yyyy-MM-dd` day in UTC, the stats
+    /// cache's `lastComputedDate`, which covers every day up to and including
+    /// itself. Nil means the cache covers nothing.
+    ///
+    /// The per-day picture ignores the cutoff; only `newMessages`,
+    /// `newSessions` and `modelUsage` respect it.
     ///
     /// The cutoff is compared in UTC because that is how Claude Code buckets
     /// the days it wrote into the cache, while the days this returns are local,
@@ -148,10 +204,6 @@ actor LiveStatsScanner {
                 let modified = values.contentModificationDate,
                 let size = values.fileSize
             else { continue }
-
-            // A file untouched since the cutoff day ended can hold nothing the
-            // cache has not already counted.
-            if let cutoff, utcDay.string(from: modified) <= cutoff { continue }
 
             let path = url.path
             seen.insert(path)
@@ -284,14 +336,20 @@ actor LiveStatsScanner {
         if tally.firstDayUTC == nil { tally.firstDayUTC = stamp.utc }
         if tally.firstDayLocal == nil { tally.firstDayLocal = stamp.local }
 
-        if let cutoff, stamp.utc <= cutoff { return }
-
         // A sidechain entry is a subagent's turn copied into its parent's
         // transcript; Claude Code drops those rather than count the same work
         // twice.
         if head.isSidechain { return }
 
-        if !isSubagent { tally.days[stamp.local, default: DayActivity()].messages += 1 }
+        // Everything the cache already holds is counted for its tokens and for
+        // nothing else: adding its messages or its models to the cache's own
+        // totals would count the same work twice.
+        let covered = cutoff.map { stamp.utc <= $0 } ?? false
+
+        if !isSubagent {
+            tally.days[stamp.local, default: DayActivity()].messages += 1
+            if !covered { tally.newMessages += 1 }
+        }
         guard head.type == "assistant" else { return }
 
         // JSONSerialization returns autoreleased Foundation objects and a Swift
@@ -315,7 +373,7 @@ actor LiveStatsScanner {
                 cacheRead: (usage["cache_read_input_tokens"] as? Int) ?? 0,
                 cacheCreation: (usage["cache_creation_input_tokens"] as? Int) ?? 0
             )
-            tally.modelUsage[model] = (tally.modelUsage[model] ?? TokenUsage()) + counted
+            if !covered { tally.modelUsage[model] = (tally.modelUsage[model] ?? TokenUsage()) + counted }
             tally.days[stamp.local, default: DayActivity()].tokens += counted.billable
         }
     }
@@ -342,18 +400,22 @@ actor LiveStatsScanner {
         for (model, usage) in tally.modelUsage {
             stats.modelUsage[model] = (stats.modelUsage[model] ?? TokenUsage()) + usage
         }
-        // The session belongs to the day it started on, and only counts at all
-        // if that day is past the cutoff — a log resumed today after a month
-        // idle was counted as a session when it began.
+        stats.newMessages += tally.newMessages
+
+        // The session belongs to the day it started on — a log resumed today
+        // after a month idle was a session when it began, not now. It is new to
+        // the cache only if that day is past the watermark.
         guard !isSubagent else { return }
         guard let started = tally.firstDayLocal, let startedUTC = tally.firstDayUTC else { return }
-        if let cutoff, startedUTC <= cutoff { return }
         stats.days[started, default: DayActivity()].sessions += 1
+        if let cutoff, startedUTC <= cutoff { return }
+        stats.newSessions += 1
     }
 
     private struct Tally {
         var days: [String: DayActivity] = [:]
         var modelUsage: [String: TokenUsage] = [:]
+        var newMessages: Int = 0
         var firstDayUTC: String?
         var firstDayLocal: String?
     }

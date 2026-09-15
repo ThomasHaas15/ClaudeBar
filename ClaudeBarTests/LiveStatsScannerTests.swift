@@ -87,8 +87,8 @@ struct LiveStatsScannerTests {
 
         // The untimestamped bookkeeping line is not a message, the same way
         // Claude Code's own stats skip it.
-        #expect(stats.messageCount == 3)
-        #expect(stats.sessionCount == 1)
+        #expect(stats.newMessages == 3)
+        #expect(stats.newSessions == 1)
         #expect(stats.modelUsage["claude-opus-5"] == TokenUsage(input: 100, output: 900, cacheRead: 5_000, cacheCreation: 50))
         #expect(stats.modelUsage["claude-haiku-4-5"] == TokenUsage(input: 10, output: 40))
         #expect(stats.days[day]?.messages == 3)
@@ -116,7 +116,7 @@ struct LiveStatsScannerTests {
         #expect(stats.days[localDay("2026-08-10T12:00:00Z")]?.messages == 1)
         #expect(stats.days[localDay("2026-08-11T12:00:00Z")]?.messages == 2)
         // One session, on the day its first entry was written.
-        #expect(stats.sessionCount == 1)
+        #expect(stats.newSessions == 1)
         #expect(stats.days[localDay("2026-08-10T12:00:00Z")]?.sessions == 1)
         #expect(stats.days[localDay("2026-08-11T12:00:00Z")]?.sessions == 0)
     }
@@ -136,10 +136,37 @@ struct LiveStatsScannerTests {
 
         let stats = await LiveStatsScanner(projectsDir: dir).scan(after: "2026-08-10")
         #expect(stats.modelUsage["opus"] == TokenUsage(input: 5, output: 7))
-        #expect(stats.messageCount == 1)
+        #expect(stats.newMessages == 1)
         // The session started before the cutoff, so the cache already counted
         // it; counting it again would inflate the session total every scan.
-        #expect(stats.sessionCount == 0)
+        #expect(stats.newSessions == 0)
+    }
+
+    /// Totals stop at the cutoff; the day-by-day record does not. The cache has
+    /// figures of its own for the covered days, but they move only when someone
+    /// opens `/usage` and its token column counts cache reads besides, so the
+    /// app keeps its own account of every day it can still see.
+    @Test func recordsEveryDayEvenOnesTheCacheCovers() async throws {
+        let dir = try makeProjectsDir()
+        try write(
+            [
+                assistantLine(model: "opus", input: 1_000, output: 1_000, timestamp: "2026-08-09T12:00:00Z"),
+                assistantLine(model: "opus", input: 5, output: 7, timestamp: "2026-08-11T12:00:00Z")
+            ],
+            to: dir.appendingPathComponent("project/a.jsonl")
+        )
+
+        let stats = await LiveStatsScanner(projectsDir: dir).scan(after: "2026-08-10")
+        let covered = localDay("2026-08-09T12:00:00Z")
+        #expect(stats.days[covered]?.tokens == 2_000)
+        #expect(stats.days[covered]?.messages == 1)
+        #expect(stats.days[covered]?.sessions == 1)
+        #expect(stats.days[localDay("2026-08-11T12:00:00Z")]?.tokens == 12)
+        // …but nothing the cache's lifetime totals already hold is offered to
+        // them a second time.
+        #expect(stats.newMessages == 1)
+        #expect(stats.newSessions == 0)
+        #expect(stats.modelUsage["opus"] == TokenUsage(input: 5, output: 7))
     }
 
     /// Moving the cutoff invalidates the per-file tallies, which were filtered
@@ -176,8 +203,8 @@ struct LiveStatsScannerTests {
 
         let stats = await LiveStatsScanner(projectsDir: dir).scan(after: nil)
         #expect(stats.modelUsage["opus"] == TokenUsage(input: 21, output: 31))
-        #expect(stats.sessionCount == 1)
-        #expect(stats.messageCount == 1)
+        #expect(stats.newSessions == 1)
+        #expect(stats.newMessages == 1)
     }
 
     /// A sidechain entry is a subagent turn copied into the parent transcript;
@@ -197,7 +224,7 @@ struct LiveStatsScannerTests {
 
         let stats = await LiveStatsScanner(projectsDir: dir).scan(after: nil)
         #expect(stats.modelUsage["opus"] == TokenUsage(input: 1, output: 1))
-        #expect(stats.messageCount == 1)
+        #expect(stats.newMessages == 1)
     }
 
     /// Records carry quoted JSON in their bodies — a tool result, a pasted
@@ -235,8 +262,12 @@ struct LiveStatsScannerTests {
 
         let stats = await LiveStatsScanner(projectsDir: dir).scan(after: "2026-08-10")
         #expect(stats.modelUsage["opus"] == TokenUsage(input: 20, output: 30))
-        #expect(stats.messageCount == 1)
-        #expect(stats.days[localDay("2026-08-10T23:00:00-10:00")]?.messages == 1)
+        // Only the second is new to the cache…
+        #expect(stats.newMessages == 1)
+        // …while the record holds both. Counted across every day rather than on
+        // one of them: which local days these two fall on depends on the zone
+        // the test runs in, but that there are two of them does not.
+        #expect(stats.days.values.reduce(0) { $0 + $1.messages } == 2)
     }
 
     /// The scan resumes an append-only log from where it stopped, so a rescan
@@ -259,8 +290,8 @@ struct LiveStatsScannerTests {
         )
         let second = await scanner.scan(after: nil)
         #expect(second.modelUsage["opus"] == TokenUsage(input: 11, output: 22))
-        #expect(second.messageCount == 2)
-        #expect(second.sessionCount == 1)
+        #expect(second.newMessages == 2)
+        #expect(second.newSessions == 1)
     }
 
     /// An unchanged file must read back the same totals from its cached tally.
@@ -295,7 +326,7 @@ struct LiveStatsScannerTests {
         )
 
         let stats = await LiveStatsScanner(projectsDir: dir).scan(after: nil)
-        #expect(stats.messageCount == 2)
+        #expect(stats.newMessages == 2)
         #expect(stats.modelUsage["opus"] == TokenUsage(input: 4, output: 5))
     }
 
@@ -313,19 +344,20 @@ struct LiveStatsScannerTests {
 
         let scanner = LiveStatsScanner(projectsDir: dir)
         let first = await scanner.scan(after: nil)
-        #expect(first.messageCount == 20)
+        #expect(first.newMessages == 20)
 
         try write(
             [assistantLine(model: "opus", input: 1, output: 1, timestamp: "2026-08-10T12:00:00Z")],
             to: file
         )
         let second = await scanner.scan(after: nil)
-        #expect(second.messageCount == 1)
+        #expect(second.newMessages == 1)
         #expect(second.modelUsage["opus"] == TokenUsage(input: 1, output: 1))
     }
 
-    /// Files the JSON stats cache already covers are skipped without being read.
-    @Test func skipsFilesUntouchedSinceTheCutoff() async throws {
+    /// A file the stats cache already covers still gets read — for the record,
+    /// not for the totals.
+    @Test func fileTheCacheCoversAddsNothingToTheTotals() async throws {
         let dir = try makeProjectsDir()
         let file = dir.appendingPathComponent("project/a.jsonl")
         try write(
@@ -338,8 +370,13 @@ struct LiveStatsScannerTests {
         )
 
         let scanner = LiveStatsScanner(projectsDir: dir)
-        #expect(await scanner.scan(after: "2026-08-10") == LiveStats())
-        #expect(await scanner.scan(after: "2026-08-09").messageCount == 1)
+        let covered = await scanner.scan(after: "2026-08-10")
+        #expect(covered.newMessages == 0)
+        #expect(covered.newSessions == 0)
+        #expect(covered.modelUsage.isEmpty)
+        #expect(covered.days[localDay("2026-08-10T12:00:00Z")]?.tokens == 3)
+
+        #expect(await scanner.scan(after: "2026-08-09").newMessages == 1)
     }
 
     /// A record still being written has no terminating newline yet; it must be
@@ -354,11 +391,11 @@ struct LiveStatsScannerTests {
 
         let scanner = LiveStatsScanner(projectsDir: dir)
         let partial = await scanner.scan(after: nil)
-        #expect(partial.messageCount == 0)
+        #expect(partial.newMessages == 0)
 
         try append([String(line[split...])], to: file)
         let complete = await scanner.scan(after: nil)
-        #expect(complete.messageCount == 1)
+        #expect(complete.newMessages == 1)
         #expect(complete.modelUsage["opus"] == TokenUsage(input: 6, output: 9))
     }
 }

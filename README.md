@@ -21,12 +21,12 @@ A macOS menu bar app that surfaces **Claude Code** usage at a glance — session
 
 - **Live rate limits** — Session (5-hour) and Week (all models) percentages with reset times, refreshed on every Claude Code prompt
 - **Header at a glance** — today's tokens, weekly-limit delta since midnight, current streak
-- **Stats** — total sessions, total tokens, current and longest streak, longest session duration, 30-day activity heatmap — hover a day for its tokens and messages
+- **Stats** — tokens this week and this month with a green/red arrow against the same days of the period before, current and longest streak, longest session duration, lifetime totals, full-width activity heatmap (about twenty weeks — as many as the popover fits) — hover a day for its tokens and messages
 - **Models** — per-model token share with input/output/cache breakdown and a favorite-model summary. Model names are derived from the id's shape, so a model released after this build still reads as "Opus 6" rather than as a raw id
 - **Status** — Claude Code version, session activity ("2 working, 1 waiting, 1 idle"), running session count, launch-at-login toggle, statusline installer
 - **Threshold notifications** — fires at 80% and 100% of session and weekly limits, once per reset window
 - **Visual indicator in the menu bar** — sparkle glyph picks up a colored dot when any limit goes warning (yellow ≥ 80%) or critical (red = 100%)
-- **No credentials, no network** — reads only local files under `~/.claude/`
+- **No credentials, no network** — reads only local files under `~/.claude/`, and writes only its own day-by-day record
 - **Live file watching** — `DispatchSource` vnode events push updates the moment Claude Code writes data
 
 ## Quota Status Thresholds
@@ -104,6 +104,8 @@ ClaudeBar reads `~/.claude` — or `$CLAUDE_CONFIG_DIR`, if you point Claude Cod
 | `~/.claude/rate-limits.json` | Usage | Written by the statusline relay (see above). |
 | `~/.claude/sessions/*.json` | Status | Running sessions: pid, version, and what each one is doing. |
 
+One file is ClaudeBar's own: `~/Library/Application Support/ClaudeBar/daily-activity.json`, a day-by-day record of what the scan has seen. See below for why it has to exist.
+
 ### Why the live scan carries the weight
 
 `stats-cache.json` is the cache behind Claude Code's own `/usage` screen, and it is **only recomputed when you open that screen** — and even then it stops at yesterday, because the dialog recomputes today from the transcripts. A machine whose owner never runs `/usage` has a stats cache frozen on the day they last did.
@@ -113,7 +115,24 @@ So ClaudeBar treats it as history, not as a feed: the cache covers everything up
 Two consequences worth knowing:
 
 - **Tokens mean input + output.** Cache reads and writes are two orders of magnitude larger and would turn every figure into a measure of context size, so they are counted separately and shown per model in the Models tab.
-- **Claude Code prunes old transcripts** (`cleanupPeriodDays`, 30 days by default). History older than that survives only in whatever the stats cache already absorbed.
+- **Claude Code prunes old transcripts** (`cleanupPeriodDays`, 30 days by default). Whatever the stats cache absorbed survives as lifetime totals; per-day figures survive only in ClaudeBar's own record (below).
+
+### Why ClaudeBar keeps a day-by-day record of its own
+
+The stats cache has a per-day token figure, `dailyModelTokens`, and ClaudeBar deliberately ignores it. It counts cache reads and writes alongside input and output:
+
+| Day | `dailyModelTokens` | input + output |
+|---|---|---|
+| 2026-09-02 | 33,320,754 | 326,341 |
+| 2026-09-13 | 4,704,474 | 120,810 |
+
+Roughly a hundred times the number shown everywhere else in the app, so a day taken from the cache set beside a day taken from the live scan is not a comparison — it is a fake crash every time the week straddles the cache's last computed day.
+
+So per-day tokens come only from the transcripts. Which leaves the other problem: Claude Code throws those away after thirty days, while the heatmap reaches back some twenty weeks and a month-on-month comparison further still. ClaudeBar therefore writes down what it sees, in `daily-activity.json`, and a day stays readable long after its transcripts are gone.
+
+The three sources — the live scan, ClaudeBar's record, and the cache — are partial views of the same days rather than slices of different ones, so they are merged by taking the largest figure for each field rather than by adding them up. A day's numbers only grow as more of it is recorded, so a day half pruned scans low and cannot overwrite what was seen while it was whole.
+
+Until two periods have both been recorded, the card says so rather than guessing: a span containing a day that did work but has no figure left shows no arrow at all.
 
 ## Development
 

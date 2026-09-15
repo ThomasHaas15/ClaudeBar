@@ -13,6 +13,10 @@ struct StatsCache: Decodable, Equatable {
     let version: Int
     let lastComputedDate: String?
     let dailyActivity: [DailyActivity]
+    /// Decoded to document the file, not to be believed: these totals count
+    /// cache reads and writes alongside input and output, which is two orders
+    /// of magnitude above what this app calls tokens. Per-day figures come from
+    /// `LiveStats.dayTokens` and `TokenHistory` instead — see `dailyTokens`.
     let dailyModelTokens: [DailyModelTokens]
     let modelUsage: [String: ModelUsage]
     let totalSessions: Int
@@ -85,18 +89,28 @@ struct MergedStats: Equatable {
     let cache: StatsCache?
     let live: LiveStats
 
+    /// What ClaudeBar recorded on earlier runs, for the days whose transcripts
+    /// Claude Code has since pruned.
+    let history: [String: DayActivity]
+
     /// Start of the local day "today" refers to. Passed in rather than read
     /// off the clock so that it changes only when `StatsStore` says it does —
     /// see the note on `StatsStore.today`.
     let today: Date
 
-    init(cache: StatsCache?, live: LiveStats, today: Date = Calendar.current.startOfDay(for: Date())) {
+    init(
+        cache: StatsCache?,
+        live: LiveStats,
+        history: [String: DayActivity] = [:],
+        today: Date = Calendar.current.startOfDay(for: Date())
+    ) {
         self.cache = cache
         self.live = live
+        self.history = history
         self.today = today
     }
 
-    var hasData: Bool { cache != nil || !live.days.isEmpty }
+    var hasData: Bool { cache != nil || !live.days.isEmpty || !history.isEmpty }
 
     var totalTokens: Int {
         let cached = cache?.modelUsage.values.reduce(0) { $0 + $1.inputTokens + $1.outputTokens } ?? 0
@@ -104,48 +118,75 @@ struct MergedStats: Equatable {
     }
 
     var totalSessions: Int {
-        (cache?.totalSessions ?? 0) + live.sessionCount
+        (cache?.totalSessions ?? 0) + live.newSessions
     }
 
     var totalMessages: Int {
-        (cache?.totalMessages ?? 0) + live.messageCount
+        (cache?.totalMessages ?? 0) + live.newMessages
     }
 
-    /// Per-day activity, cache first and the live scan over the top. The two
-    /// never overlap: the scanner is given the cache's last covered day and
-    /// starts after it.
-    var dailyActivity: [StatsCache.DailyActivity] {
-        var byDate: [String: StatsCache.DailyActivity] = [:]
-        for day in cache?.dailyActivity ?? [] { byDate[day.date] = day }
-        for (date, live) in live.days {
-            let prior = byDate[date]
-            byDate[date] = StatsCache.DailyActivity(
-                date: date,
-                messageCount: (prior?.messageCount ?? 0) + live.messages,
-                sessionCount: (prior?.sessionCount ?? 0) + live.sessions,
-                toolCallCount: (prior?.toolCallCount ?? 0) + live.toolCalls
+    /// Every day any of the three sources knows about, each field taken from
+    /// whichever source recorded the most of it.
+    ///
+    /// Not a sum. All three are partial observations of the same days rather
+    /// than slices of different ones: the scan sees whatever transcripts are
+    /// still on disk, the app's own record holds what the scan saw on earlier
+    /// runs, and the cache holds whatever Claude Code last computed. Adding
+    /// them would count a day two or three times over; taking the largest gives
+    /// the fullest account anything has of that day, and a day scanned short
+    /// because half its logs were pruned cannot erase what was seen while they
+    /// were whole.
+    var dailyRecords: [String: DayActivity] {
+        var byDate: [String: DayActivity] = [:]
+        for day in cache?.dailyActivity ?? [] {
+            byDate[day.date] = DayActivity(
+                messages: day.messageCount,
+                sessions: day.sessionCount,
+                toolCalls: day.toolCallCount
             )
         }
-        return byDate.values.sorted { $0.date < $1.date }
+        for (date, recorded) in history {
+            byDate[date] = DayActivity.max(byDate[date] ?? DayActivity(), rhs: recorded)
+        }
+        for (date, scanned) in live.days {
+            byDate[date] = DayActivity.max(byDate[date] ?? DayActivity(), rhs: scanned)
+        }
+        return byDate
     }
 
-    /// Per-day token totals, merged the way `dailyActivity` is and with the same
-    /// guarantee that the two sides never cover the same day.
+    /// `dailyRecords` in the shape the cache writes, for the heatmap.
+    var dailyActivity: [StatsCache.DailyActivity] {
+        dailyRecords
+            .map { date, day in
+                StatsCache.DailyActivity(
+                    date: date,
+                    messageCount: day.messages,
+                    sessionCount: day.sessions,
+                    toolCallCount: day.toolCalls
+                )
+            }
+            .sorted { $0.date < $1.date }
+    }
+
+    /// Per-day token totals, in the app's measure: input + output, counted from
+    /// the transcripts. Two sources, both of them that measure — what the scan
+    /// can still see, over what ClaudeBar recorded while it could.
     ///
-    /// A day is *absent* rather than zero when nothing recorded a figure for it:
-    /// Claude Code rebuilt `dailyModelTokens` when the cache went to v5 and did
-    /// not backfill, so days older than that rebuild carry activity but no token
-    /// count at all. Callers showing a number per day have to tell those apart —
-    /// see `HeatmapGrid`. One more caveat on the cache side: a cache written
-    /// before the rebuild counted cache reads and writes into these numbers,
-    /// while the live side counts neither.
+    /// Kept apart from `dailyRecords` because the stats cache must not
+    /// contribute here at all. Its `dailyModelTokens` counts cache reads and
+    /// writes too, so a day taken from it beside a day taken from the scan is
+    /// not a comparison; better a day with no figure than one that reads a
+    /// hundred times too big.
+    ///
+    /// Which means a day is *absent* rather than zero when no figure survives
+    /// for it — a day worked on before ClaudeBar was installed, or before it was
+    /// last run for long enough to matter. Callers showing a number per day have
+    /// to tell those apart: see `HeatmapGrid` and `PeriodTrend.complete`.
     var dailyTokens: [String: Int] {
         var byDate: [String: Int] = [:]
-        for day in cache?.dailyModelTokens ?? [] {
-            byDate[day.date] = day.tokensByModel.values.reduce(0, +)
-        }
-        for (date, live) in live.days {
-            byDate[date, default: 0] += live.tokens
+        for (date, recorded) in history { byDate[date] = recorded.tokens }
+        for (date, scanned) in live.days {
+            byDate[date] = max(byDate[date] ?? 0, scanned.tokens)
         }
         return byDate
     }
@@ -154,10 +195,16 @@ struct MergedStats: Equatable {
 
     var todayTokens: Int { tokens(forDay: StatsCache.todayString(today)) }
 
+    /// Days that did some work, whichever side recorded them. A day in here
+    /// with no entry in `dailyTokens` is a day whose token figure is simply
+    /// gone, which is what makes a total over a span unreliable rather than
+    /// small.
+    var daysWithActivity: Set<String> {
+        Set(dailyRecords.filter { !$0.value.isEmpty }.keys)
+    }
+
     var allActiveDates: [String] {
-        var set = Set(cache?.dailyActivity.map(\.date) ?? [])
-        set.formUnion(live.activeDates)
-        return set.sorted()
+        dailyRecords.keys.sorted()
     }
 
     var modelTotals: [String: TokenUsage] {
@@ -182,6 +229,10 @@ final class StatsStore {
     private(set) var cache: StatsCache?
     private(set) var live: LiveStats = LiveStats()
 
+    /// Everything `ActivityHistory` holds, mirrored here so that a view rereads
+    /// when a scan adds to it.
+    private(set) var history: [String: DayActivity] = [:]
+
     /// The local day "tokens today" counts, as a start-of-day instant. Held as
     /// observed state rather than read off the clock at render time: SwiftUI
     /// only re-runs `body` when observed state changes, and a Mac left alone
@@ -190,13 +241,16 @@ final class StatsStore {
     /// yesterday's total until the next prompt.
     private(set) var today: Date = Calendar.current.startOfDay(for: Date())
 
-    var merged: MergedStats { MergedStats(cache: cache, live: live, today: today) }
+    var merged: MergedStats {
+        MergedStats(cache: cache, live: live, history: history, today: today)
+    }
 
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var scanTask: Task<Void, Never>?
     @ObservationIgnored private var rescanRequested = false
 
     init() {
+        history = ActivityHistory.shared.days
         reload()
         let nc = NotificationCenter.default
         observers = [
@@ -263,5 +317,7 @@ final class StatsStore {
 
     private func applyLive(_ result: LiveStats) {
         if live != result { live = result }
+        let recorded = ActivityHistory.shared.record(result.days)
+        if history != recorded { history = recorded }
     }
 }

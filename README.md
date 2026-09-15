@@ -71,13 +71,11 @@ Debug builds never update themselves — replacing the bundle under someone mid-
 
 ## Releasing
 
-```sh
-make tag V=0.2.0
-```
+Merging to `main` publishes a release. [`release.yml`](.github/workflows/release.yml) reads the newest tag, adds one to its minor, runs the tests, builds and ad-hoc signs a Release copy, and publishes `v1.x.0` with `ClaudeBar-1.x.0.zip` attached. Installed copies pick it up within the hour. Nothing to tag by hand, and no version is committed to the tree — the tags are the record of what shipped.
 
-Bumps `MARKETING_VERSION` in `project.yml`, commits, tags `v0.2.0`, and pushes. [`release.yml`](.github/workflows/release.yml) picks up the tag, runs the tests, builds and ad-hoc signs a Release copy, checks the built app's version against the tag, and publishes a GitHub release with `ClaudeBar-0.2.0.zip` attached. Installed copies pick it up within the hour.
+Merges that change nothing the app ships — Markdown, `docs/`, tests, CI config — don't release, and neither does a commit whose message contains `[skip release]`. A major bump is a deliberate act: run the Release workflow from the Actions tab with a version such as `2.0.0`, and the minor carries on from there.
 
-The version lives in `project.yml` and nowhere else — `Info.plist` carries `$(MARKETING_VERSION)` rather than a literal. A tag that disagrees with `project.yml` fails the release rather than shipping a build that lies about its version, which the updater would then try to install on a loop.
+Local builds stamp themselves one minor above the newest release, through the same [`scripts/next-version.sh`](scripts/next-version.sh) the workflow uses. That is what stops `make install` from handing your own unmerged work to the updater to overwrite.
 
 ## First-run setup
 

@@ -34,7 +34,12 @@ jobs:
     # counted as using it. The subject of a squash merge is the PR title, so
     # skipping now means titling the PR `[skip release] …` and nothing else does.
     if: ${{ !startsWith(github.event.head_commit.message, '[skip release]') }}
-    runs-on: macos-15
+    # Xcode 27 / macOS 27 SDK, matching what the app is developed against.
+    # v1.0.0 shipped from macos-15, which is Xcode 16.4 and the macOS 15.5 SDK,
+    # and SwiftUI sized the popover differently there — the menu bar window
+    # grew to the tallest tab and never shrank back. A release has to be built
+    # by the toolchain it was tested on.
+    runs-on: xcode-27
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,7 +48,10 @@ jobs:
           fetch-depth: 0
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          echo "macOS SDK $(xcrun --sdk macosx --show-sdk-version)"
 
       - name: Decide the version
         id: version

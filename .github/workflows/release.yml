@@ -29,7 +29,11 @@ concurrency:
 jobs:
   release:
     name: Build & Publish
-    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    # Leading, not merely present: `contains` skipped the release that
+    # introduced this workflow, because the commit body explaining the marker
+    # counted as using it. The subject of a squash merge is the PR title, so
+    # skipping now means titling the PR `[skip release] …` and nothing else does.
+    if: ${{ !startsWith(github.event.head_commit.message, '[skip release]') }}
     runs-on: macos-15
     steps:
       - name: Checkout

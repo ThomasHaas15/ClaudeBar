@@ -77,7 +77,9 @@ launch:
 # release workflow checks and what the updater compares against.
 tag:
 	@test -n "$(V)" || { echo "usage: make tag V=0.2.0"; exit 1; }
-	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty"; exit 1; }
+	@# Tracked changes only: CI builds the tag, so an untracked scratch file in
+	@# the working tree cannot reach the release and has no business blocking it.
+	@test -z "$$(git status --porcelain --untracked-files=no)" || { echo "tracked files have uncommitted changes"; exit 1; }
 	sed -i '' 's/^\( *MARKETING_VERSION: *\).*/\1"$(V)"/' project.yml
 	git add project.yml
 	git commit -m "Release $(V)"

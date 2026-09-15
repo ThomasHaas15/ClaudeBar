@@ -4,14 +4,14 @@ struct StatusTab: View {
     @Environment(SessionsStore.self) private var sessions
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: Theme.sectionSpacing) {
             row("Claude Code", value: sessions.version ?? "—")
             row("Status", value: sessions.activitySummary)
             row("Active sessions", value: "\(sessions.activeCount)")
             launchAtLoginRow
             Divider().padding(.top, 4)
             statuslineRow
-            Divider()
+            Divider().padding(.top, 4)
             updatesSection
         }
     }
@@ -110,49 +110,56 @@ struct StatusTab: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Updates").sectionHeaderStyle()
 
-            // Named like the Claude Code row above it, since the tab now shows
-            // two versions and a bare number beside a switch says neither which
-            // version it is nor what the switch does.
-            row("ClaudeBar", value: updater.currentVersion.description)
+            // Every line here is a row of the tab, kept at the same distance
+            // as the rows above the divider — including the status line, which
+            // is a row in its own right rather than a caption hanging off the
+            // switch. The section reads as a continuation of the tab, not as a
+            // block with a rhythm of its own.
+            VStack(alignment: .leading, spacing: Theme.sectionSpacing) {
+                // Named like the Claude Code row above it, since the tab now
+                // shows two versions and a bare number beside a switch says
+                // neither which version it is nor what the switch does.
+                row("ClaudeBar", value: updater.currentVersion.description)
 
-            HStack {
-                Text("Update automatically").foregroundStyle(.secondary)
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { updater.automatic },
-                    set: { updater.automatic = $0 }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-            }
-            .font(.body)
-
-            HStack(spacing: 6) {
-                updateStatus(updater)
-                Spacer()
-                switch updater.state {
-                case .checking, .downloading, .installing, .relaunching:
-                    EmptyView()
-                case .available:
-                    Button("Install and restart") {
-                        Task { await updater.installAvailable() }
-                    }
-                    .buttonStyle(.link)
-                    .controlSize(.small)
-                case .idle, .failed:
-                    Button("Check now") {
-                        Task { await updater.check(userInitiated: true) }
-                    }
-                    .buttonStyle(.link)
+                HStack {
+                    Text("Update automatically").foregroundStyle(.secondary)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { updater.automatic },
+                        set: { updater.automatic = $0 }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
                     .controlSize(.small)
                 }
-            }
+                .font(.body)
 
-            if let page = updater.manualDownload, updater.state.isFailure {
-                Button("Open release page") { NSWorkspace.shared.open(page) }
-                    .buttonStyle(.link)
-                    .controlSize(.small)
+                HStack(spacing: 6) {
+                    updateStatus(updater)
+                    Spacer()
+                    switch updater.state {
+                    case .checking, .downloading, .installing, .relaunching:
+                        EmptyView()
+                    case .available:
+                        Button("Install and restart") {
+                            Task { await updater.installAvailable() }
+                        }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                    case .idle, .failed:
+                        Button("Check now") {
+                            Task { await updater.check(userInitiated: true) }
+                        }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                    }
+                }
+
+                if let page = updater.manualDownload, updater.state.isFailure {
+                    Button("Open release page") { NSWorkspace.shared.open(page) }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                }
             }
         }
     }

@@ -10,7 +10,11 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "15.0"
-    MARKETING_VERSION: "0.1.0"
+    # Only what a build straight from Xcode carries. `make build` and the
+    # release workflow both override it with scripts/next-version.sh, which
+    # reads the newest tag — releases number themselves, so no version is
+    # committed to this file.
+    MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Automatic

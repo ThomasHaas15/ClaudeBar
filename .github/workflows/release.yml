@@ -2,33 +2,58 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    # A merge that changes nothing the app ships would publish a release whose
+    # only effect is restarting ClaudeBar on every Mac running it.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
+      - ".github/workflows/ci.yml"
+      - "ClaudeBarTests/**"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 2.0.0. Leave empty to bump the minor."
+        required: false
+        type: string
 
 permissions:
   contents: write
 
+# Two merges landing together must not race for the same version number.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Build & Publish
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
     runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history and tags: the next version is read from the newest tag.
+          fetch-depth: 0
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
 
-      - name: Read version from tag
+      - name: Decide the version
         id: version
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          DECLARED=$(sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' project.yml)
-          if [ "$VERSION" != "$DECLARED" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match MARKETING_VERSION $DECLARED in project.yml."
-            echo "::error::Cut releases with 'make tag V=$VERSION', which keeps the two in step."
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(./scripts/next-version.sh)
+          fi
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::Tag v$VERSION already exists — nothing was published."
             exit 1
           fi
+          echo "Publishing v$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install XcodeGen
@@ -58,6 +83,7 @@ jobs:
             -scheme ClaudeBar \
             -configuration Release \
             -derivedDataPath build \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
@@ -74,13 +100,13 @@ jobs:
           # the copy it is replacing, so a failure here has to stop the release.
           codesign --verify --strict build/Build/Products/Release/ClaudeBar.app
 
-      - name: Verify the built version matches the tag
+      - name: Verify the built version
         run: |
           set -euo pipefail
           BUILT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
             build/Build/Products/Release/ClaudeBar.app/Contents/Info.plist)
           if [ "$BUILT" != "${{ steps.version.outputs.version }}" ]; then
-            echo "::error::Built app reports $BUILT, tag says ${{ steps.version.outputs.version }}."
+            echo "::error::Built app reports $BUILT, this release is ${{ steps.version.outputs.version }}."
             exit 1
           fi
 
@@ -96,7 +122,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "v${{ steps.version.outputs.version }}" \
             "dist/ClaudeBar-${{ steps.version.outputs.version }}.zip" \
-            --title "$GITHUB_REF_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "v${{ steps.version.outputs.version }}" \
             --generate-notes

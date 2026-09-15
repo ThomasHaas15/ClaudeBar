@@ -109,6 +109,38 @@ struct StatsCacheTests {
         #expect(activity[0].sessionCount == 2)
     }
 
+    /// What the heatmap reads on hover. A day the cache holds no token figure
+    /// for has to stay *absent* rather than come back as zero: Claude Code
+    /// rebuilt `dailyModelTokens` at v5 without backfilling, so most days that
+    /// have activity have no token count, and drawing those as "0 tokens" would
+    /// be a claim the data does not make.
+    @Test func dailyTokensLeaveOutDaysNothingRecorded() throws {
+        // A cache that worked on the 24th but only ever counted tokens from the
+        // 25th on, which is the shape every cache has after the v5 rebuild.
+        let json = cacheJSON().replacingOccurrences(
+            of: """
+            {"date":"2026-04-25","messageCount":10,"sessionCount":1,"toolCallCount":2}
+            """,
+            with: """
+            {"date":"2026-04-24","messageCount":7,"sessionCount":1,"toolCallCount":1},
+            {"date":"2026-04-25","messageCount":10,"sessionCount":1,"toolCallCount":2}
+            """
+        )
+        let cache = try JSONDecoder().decode(StatsCache.self, from: Data(json.utf8))
+        var live = LiveStats()
+        live.days["2026-04-27"] = DayActivity(messages: 12, tokens: 7_000)
+        live.days["2026-04-28"] = DayActivity(messages: 4, tokens: 0)
+
+        let tokens = MergedStats(cache: cache, live: live).dailyTokens
+        #expect(tokens["2026-04-25"] == 1500) // both models on the cached day
+        #expect(tokens["2026-04-27"] == 7_000)
+        // Scanned and genuinely empty — that *is* a figure, and zero is it.
+        #expect(tokens["2026-04-28"] == 0)
+        // Worked on, but no token count was ever written for it.
+        #expect(cache.dailyActivity.contains { $0.date == "2026-04-24" })
+        #expect(tokens["2026-04-24"] == nil)
+    }
+
     @Test func hasDataFollowsEitherSource() throws {
         let cache = try JSONDecoder().decode(StatsCache.self, from: Data(cacheJSON().utf8))
         var live = LiveStats()

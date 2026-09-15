@@ -129,15 +129,28 @@ struct MergedStats: Equatable {
         return byDate.values.sorted { $0.date < $1.date }
     }
 
-    /// Only ever asked about today, which by construction is never in the cache
-    /// — Claude Code's own stats stop at yesterday and recompute today live.
-    /// The cache branch is there for completeness, and carries the caveat that
-    /// a cache written before its v5 daily-token rebuild counted cache reads
-    /// and writes into these numbers while the live side counts neither.
-    func tokens(forDay date: String) -> Int {
-        let cached = cache?.dailyModelTokens.first(where: { $0.date == date })?.tokensByModel.values.reduce(0, +) ?? 0
-        return cached + (live.days[date]?.tokens ?? 0)
+    /// Per-day token totals, merged the way `dailyActivity` is and with the same
+    /// guarantee that the two sides never cover the same day.
+    ///
+    /// A day is *absent* rather than zero when nothing recorded a figure for it:
+    /// Claude Code rebuilt `dailyModelTokens` when the cache went to v5 and did
+    /// not backfill, so days older than that rebuild carry activity but no token
+    /// count at all. Callers showing a number per day have to tell those apart —
+    /// see `HeatmapGrid`. One more caveat on the cache side: a cache written
+    /// before the rebuild counted cache reads and writes into these numbers,
+    /// while the live side counts neither.
+    var dailyTokens: [String: Int] {
+        var byDate: [String: Int] = [:]
+        for day in cache?.dailyModelTokens ?? [] {
+            byDate[day.date] = day.tokensByModel.values.reduce(0, +)
+        }
+        for (date, live) in live.days {
+            byDate[date, default: 0] += live.tokens
+        }
+        return byDate
     }
+
+    func tokens(forDay date: String) -> Int { dailyTokens[date] ?? 0 }
 
     var todayTokens: Int { tokens(forDay: StatsCache.todayString(today)) }
 

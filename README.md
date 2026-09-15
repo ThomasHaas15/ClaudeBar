@@ -21,7 +21,7 @@ A macOS menu bar app that surfaces **Claude Code** usage at a glance — session
 
 - **Live rate limits** — Session (5-hour) and Week (all models) percentages with reset times, refreshed on every Claude Code prompt
 - **Header at a glance** — today's tokens, weekly-limit delta since midnight, current streak
-- **Stats** — total sessions, total tokens, current and longest streak, longest session duration, 30-day activity heatmap
+- **Stats** — total sessions, total tokens, current and longest streak, longest session duration, 30-day activity heatmap — hover a day for its tokens and messages
 - **Models** — per-model token share with input/output/cache breakdown and a favorite-model summary. Model names are derived from the id's shape, so a model released after this build still reads as "Opus 6" rather than as a raw id
 - **Status** — Claude Code version, session activity ("2 working, 1 waiting, 1 idle"), running session count, launch-at-login toggle, statusline installer
 - **Threshold notifications** — fires at 80% and 100% of session and weekly limits, once per reset window

@@ -110,9 +110,13 @@ struct StatusTab: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Updates").sectionHeaderStyle()
 
+            // Named like the Claude Code row above it, since the tab now shows
+            // two versions and a bare number beside a switch says neither which
+            // version it is nor what the switch does.
+            row("ClaudeBar", value: updater.currentVersion.description)
+
             HStack {
-                Text("ClaudeBar \(updater.currentVersion.description)")
-                    .foregroundStyle(.secondary)
+                Text("Update automatically").foregroundStyle(.secondary)
                 Spacer()
                 Toggle("", isOn: Binding(
                     get: { updater.automatic },

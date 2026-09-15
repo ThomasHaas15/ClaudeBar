@@ -7,7 +7,7 @@ on:
 jobs:
   test:
     name: Build & Test
-    runs-on: macos-15
+    runs-on: xcode-27
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,6 +19,7 @@ jobs:
         run: |
           sw_vers
           xcodebuild -version
+          echo "macOS SDK $(xcrun --sdk macosx --show-sdk-version)"
           swift --version
 
       - name: Install XcodeGen
@@ -39,3 +40,32 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             test
+
+      # The app installs releases by itself, so a build nobody ran reaches every
+      # Mac running it. This is the same Release copy the release workflow would
+      # publish, downloadable from the PR to try before it ships.
+      - name: Build the Release copy
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ClaudeBar.xcodeproj \
+            -scheme ClaudeBar \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          codesign --force --deep --sign - \
+            --entitlements ClaudeBar/ClaudeBar.entitlements \
+            build/Build/Products/Release/ClaudeBar.app
+          mkdir -p dist
+          ditto -c -k --keepParent --sequesterRsrc \
+            build/Build/Products/Release/ClaudeBar.app dist/ClaudeBar.zip
+
+      - name: Upload the Release copy
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeBar-${{ github.event.pull_request.number || github.sha }}
+          path: dist/ClaudeBar.zip
+          retention-days: 7

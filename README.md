@@ -73,7 +73,7 @@ Debug builds never update themselves — replacing the bundle under someone mid-
 
 Merging to `main` publishes a release. [`release.yml`](.github/workflows/release.yml) reads the newest tag, adds one to its minor, runs the tests, builds and ad-hoc signs a Release copy, and publishes `v1.x.0` with `ClaudeBar-1.x.0.zip` attached. Installed copies pick it up within the hour. Nothing to tag by hand, and no version is committed to the tree — the tags are the record of what shipped.
 
-Merges that change nothing the app ships — Markdown, `docs/`, tests, CI config — don't release, and neither does a commit whose message contains `[skip release]`. A major bump is a deliberate act: run the Release workflow from the Actions tab with a version such as `2.0.0`, and the minor carries on from there.
+Merges that change nothing the app ships — Markdown, `docs/`, tests, CI config — don't release. To hold one back that would otherwise go out, open the PR with `[skip release]` at the front of its title; the marker only counts when it leads the merge commit's subject, so writing about it here doesn't stop anything. A major bump is a deliberate act: run the Release workflow from the Actions tab with a version such as `2.0.0`, and the minor carries on from there.
 
 Local builds stamp themselves one minor above the newest release, through the same [`scripts/next-version.sh`](scripts/next-version.sh) the workflow uses. That is what stops `make install` from handing your own unmerged work to the updater to overwrite.
 

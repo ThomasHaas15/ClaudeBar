@@ -21,7 +21,7 @@ A macOS menu bar app that surfaces **Claude Code** usage at a glance — session
 
 - **Live rate limits** — Session (5-hour) and Week (all models) percentages with reset times, refreshed on every Claude Code prompt
 - **Header at a glance** — today's tokens, weekly-limit delta since midnight, current streak
-- **Stats** — tokens this week and this month with a green/red arrow against the same days of the period before, current and longest streak, longest session duration, lifetime totals, full-width activity heatmap (about twenty weeks — as many as the popover fits) — hover a day for its tokens and messages
+- **Stats** — tokens over the last 7 and last 30 days with a green/red arrow against the equally long span before each, current and longest streak, longest session duration, lifetime totals, full-width activity heatmap (about twenty weeks — as many as the popover fits) — hover a day for its tokens and messages
 - **Models** — per-model token share with input/output/cache breakdown and a favorite-model summary. Model names are derived from the id's shape, so a model released after this build still reads as "Opus 6" rather than as a raw id
 - **Status** — Claude Code version, session activity ("2 working, 1 waiting, 1 idle"), running session count, launch-at-login toggle, statusline installer
 - **Threshold notifications** — fires at 80% and 100% of session and weekly limits, once per reset window
@@ -147,9 +147,9 @@ The stats cache has a per-day token figure, `dailyModelTokens`, and ClaudeBar de
 | 2026-09-02 | 33,320,754 | 326,341 |
 | 2026-09-13 | 4,704,474 | 120,810 |
 
-Roughly a hundred times the number shown everywhere else in the app, so a day taken from the cache set beside a day taken from the live scan is not a comparison — it is a fake crash every time the week straddles the cache's last computed day.
+Roughly a hundred times the number shown everywhere else in the app, so a day taken from the cache set beside a day taken from the live scan is not a comparison — it is a fake crash every time a window straddles the cache's last computed day.
 
-So per-day tokens come only from the transcripts. Which leaves the other problem: Claude Code throws those away after thirty days, while the heatmap reaches back some twenty weeks and a month-on-month comparison further still. ClaudeBar therefore writes down what it sees, in `daily-activity.json`, and a day stays readable long after its transcripts are gone.
+So per-day tokens come only from the transcripts. Which leaves the other problem: Claude Code throws those away after thirty days, while the heatmap reaches back some twenty weeks and the last-30-days comparison sixty days. ClaudeBar therefore writes down what it sees, in `daily-activity.json`, and a day stays readable long after its transcripts are gone.
 
 The three sources — the live scan, ClaudeBar's record, and the cache — are partial views of the same days rather than slices of different ones, so they are merged by taking the largest figure for each field rather than by adding them up. A day's numbers only grow as more of it is recorded, so a day half pruned scans low and cannot overwrite what was seen while it was whole.
 

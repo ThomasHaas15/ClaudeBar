@@ -41,16 +41,16 @@ struct StatsTab: View {
         let activeInWindow = activeDays(since: window.start, from: dates)
 
         let active = merged.daysWithActivity
-        let week = PeriodTotals.week(tokens: dailyTokens, active: active, today: stats.today)
-        let month = PeriodTotals.month(tokens: dailyTokens, active: active, today: stats.today)
+        let last7Days = PeriodTotals.trailing(days: 7, tokens: dailyTokens, active: active, today: stats.today)
+        let last30Days = PeriodTotals.trailing(days: 30, tokens: dailyTokens, active: active, today: stats.today)
 
-        // Ordered by the span each one covers, shortest first: this week, this
-        // month, the streak running now, the longest session ever, then the
-        // lifetime totals. Reading down the tab widens the window.
+        // Ordered by the span each one covers, shortest first: the last week,
+        // the last month, the streak running now, the longest session ever,
+        // then the lifetime totals. Reading down the tab widens the window.
         VStack(spacing: 10) {
             HStack(spacing: 10) {
-                trendCard("This week", week, basis: "the same days of last week")
-                trendCard("This month", month, basis: "all of last month")
+                trendCard(days: 7, last7Days)
+                trendCard(days: 30, last30Days)
             }
             .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
@@ -82,19 +82,19 @@ struct StatsTab: View {
         }
     }
 
-    private func trendCard(_ title: String, _ trend: PeriodTrend, basis: String) -> some View {
+    private func trendCard(days: Int, _ trend: PeriodTrend) -> some View {
         StatCard(
-            title: title,
+            title: "Last \(days) days",
             value: TokenFormat.compact(trend.total),
             subtitle: trendSubtitle(trend),
             delta: trend.change.map { StatCard.Delta(change: $0) }
         )
-        .help(trendHelp(trend, basis: basis))
+        .help(trendHelp(trend, basis: "the \(days) days before those"))
     }
 
     /// What the arrow is measured against, in the space of one line — named as
-    /// a span rather than as "last week", so it is never a guess which days
-    /// went into it.
+    /// a span rather than as "the week before", so it is never a guess which
+    /// days went into it.
     private func trendSubtitle(_ trend: PeriodTrend) -> String {
         guard trend.complete else { return "Some days not recorded" }
         let span = spanLabel(trend)
@@ -126,15 +126,13 @@ struct StatsTab: View {
         return "\(TokenFormat.compact(trend.previous)) tokens over \(measured)."
     }
 
-    /// "August" for a whole calendar month, otherwise the days themselves:
-    /// "Sep 7", "Sep 7–9", or "Aug 30 – Sep 2" across a month boundary.
+    /// The days themselves: "Sep 7", "Sep 7–9", or "Aug 30 – Sep 2" across a
+    /// month boundary. Never a month's name, however neatly a window happens
+    /// to land on one — both windows roll, and "September" would read as a
+    /// calendar month the card does not measure.
     private func spanLabel(_ trend: PeriodTrend) -> String {
         let cal = Calendar(identifier: .gregorian)
         let f = DateFormatter()
-        if isWholeMonth(trend, calendar: cal) {
-            f.dateFormat = "MMMM"
-            return f.string(from: trend.previousStart)
-        }
         f.dateFormat = "MMM d"
         let start = f.string(from: trend.previousStart)
         if cal.isDate(trend.previousStart, inSameDayAs: trend.previousEnd) { return start }
@@ -143,14 +141,6 @@ struct StatsTab: View {
             return "\(start)–\(f.string(from: trend.previousEnd))"
         }
         return "\(start) – \(f.string(from: trend.previousEnd))"
-    }
-
-    private func isWholeMonth(_ trend: PeriodTrend, calendar cal: Calendar) -> Bool {
-        guard cal.isDate(trend.previousStart, equalTo: trend.previousEnd, toGranularity: .month),
-              cal.component(.day, from: trend.previousStart) == 1,
-              let length = cal.range(of: .day, in: .month, for: trend.previousStart)?.count
-        else { return false }
-        return cal.component(.day, from: trend.previousEnd) == length
     }
 
     private func activeDays(since start: Date, from dates: [String]) -> Int {

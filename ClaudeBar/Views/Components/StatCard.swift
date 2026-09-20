@@ -69,8 +69,16 @@ struct StatCard: View {
                 }
             }
             .lineLimit(1)
+            // A caption is a line, not a paragraph: a card in a row of two is
+            // 137pt wide inside its padding, and the widest captions — a span
+            // that crosses a month, against a figure in millions — come within
+            // a few points of that. Rather than wrap, and take the card and
+            // the one beside it a line taller, the last few points are bought
+            // back by shrinking type nobody can tell apart at this size.
             Text(subtitle ?? " ")
                 .font(.caption2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

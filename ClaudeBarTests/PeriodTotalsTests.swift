@@ -17,73 +17,97 @@ struct PeriodTotalsTests {
         return f.string(from: trend[keyPath: keyPath])
     }
 
-    /// Weeks start on Monday, the way the heatmap draws them — the Sunday
-    /// before belongs to the week that just ended.
-    @Test func weekRunsFromMondayToToday() {
+    /// The window ends today and counts today as one of its days, so seven
+    /// days back from a Wednesday reaches the Thursday before — not the
+    /// Monday a calendar week would have started on.
+    @Test func theWindowEndsTodayAndCountsIt() {
         let tokens = [
-            "2026-09-13": 500,      // Sunday, the week before
-            "2026-09-14": 100,      // Monday
-            "2026-09-15": 200,
-            "2026-09-16": 300       // today, a Wednesday
+            "2026-09-09": 500,      // the day before the window opens
+            "2026-09-10": 100,      // its first day
+            "2026-09-14": 200,
+            "2026-09-16": 300       // today
         ]
-        let week = PeriodTotals.week(tokens: tokens, active: Set(tokens.keys), today: date("2026-09-16"))
+        let week = PeriodTotals.trailing(
+            days: 7,
+            tokens: tokens,
+            active: Set(tokens.keys),
+            today: date("2026-09-16")
+        )
         #expect(week.total == 600)
+        #expect(day(week, \.previousEnd) == "2026-09-09")
     }
 
-    /// Against the same days of last week, not against all of it: a Monday's
-    /// two hours set beside a whole week is a red arrow every Monday.
-    @Test func weekComparesTheSameDaysOfLastWeek() {
+    /// Against the seven days before those, never against a calendar week: the
+    /// two windows are the same length on every day of the week, so a Monday
+    /// morning is not set beside a whole week's work.
+    @Test func theWindowComparesTheSameNumberOfDaysBefore() {
         let tokens = [
-            "2026-09-07": 50,       // Mon
-            "2026-09-08": 50,       // Tue
-            "2026-09-09": 100,      // Wed — as far as this week has come
-            "2026-09-10": 900,      // Thu, deliberately large and out of scope
-            "2026-09-11": 900,
-            "2026-09-14": 300,
-            "2026-09-15": 300,
-            "2026-09-16": 0
+            "2026-09-02": 900,      // before the baseline opens
+            "2026-09-03": 50,       // its first day
+            "2026-09-07": 50,
+            "2026-09-09": 100,      // its last day
+            "2026-09-10": 300,      // the window itself
+            "2026-09-16": 300
         ]
-        let week = PeriodTotals.week(tokens: tokens, active: Set(tokens.keys), today: date("2026-09-16"))
+        let week = PeriodTotals.trailing(
+            days: 7,
+            tokens: tokens,
+            active: Set(tokens.keys),
+            today: date("2026-09-16")
+        )
         #expect(week.previous == 200)
-        #expect(day(week, \.previousStart) == "2026-09-07")
+        #expect(day(week, \.previousStart) == "2026-09-03")
         #expect(day(week, \.previousEnd) == "2026-09-09")
         #expect(week.change == 2.0)     // 600 against 200
     }
 
-    /// The month is measured against the whole of the one before, not against
-    /// the same days of it: half of August is not a quantity anyone has a feel
-    /// for, while August is.
-    @Test func monthComparesAgainstTheWholeMonthBefore() {
+    /// Thirty days works the same way, and neither window cares where a month
+    /// begins or ends.
+    @Test func thirtyDaysRollsStraightThroughMonthBoundaries() {
         let tokens = [
-            "2026-08-01": 100,
-            "2026-08-03": 100,
-            "2026-08-20": 5_000,    // later in August than this month has reached
-            "2026-08-31": 800,      // and its very last day
-            "2026-09-01": 50,
-            "2026-09-03": 100
+            "2026-07-18": 900,      // before the baseline opens
+            "2026-07-19": 100,      // its first day
+            "2026-08-01": 5_000,
+            "2026-08-17": 900,      // its last day
+            "2026-08-18": 50,       // the window itself
+            "2026-09-16": 100
         ]
-        let month = PeriodTotals.month(tokens: tokens, active: Set(tokens.keys), today: date("2026-09-03"))
+        let month = PeriodTotals.trailing(
+            days: 30,
+            tokens: tokens,
+            active: Set(tokens.keys),
+            today: date("2026-09-16")
+        )
         #expect(month.total == 150)
         #expect(month.previous == 6_000)
-        #expect(day(month, \.previousStart) == "2026-08-01")
-        #expect(day(month, \.previousEnd) == "2026-08-31")
+        #expect(day(month, \.previousStart) == "2026-07-19")
+        #expect(day(month, \.previousEnd) == "2026-08-17")
     }
 
-    /// Whatever the length of the month before, the span is all of it.
-    @Test func previousMonthRunsToItsOwnLastDay() {
-        let february = PeriodTotals.month(tokens: [:], active: [], today: date("2026-03-31"))
-        #expect(day(february, \.previousStart) == "2026-02-01")
-        #expect(day(february, \.previousEnd) == "2026-02-28")
-
-        let january = PeriodTotals.month(tokens: [:], active: [], today: date("2026-02-01"))
-        #expect(day(january, \.previousStart) == "2026-01-01")
-        #expect(day(january, \.previousEnd) == "2026-01-31")
+    /// Whatever the length of the months it crosses, each window is exactly as
+    /// many days as it was asked for.
+    @Test func bothWindowsAreExactlyAsLongAsAsked() {
+        let cal = Calendar(identifier: .gregorian)
+        for days in [7, 30] {
+            for today in ["2026-03-01", "2026-03-31", "2026-01-01"] {
+                let trend = PeriodTotals.trailing(days: days, tokens: [:], active: [], today: date(today))
+                let span = cal.dateComponents(
+                    [.day],
+                    from: trend.previousStart,
+                    to: trend.previousEnd
+                ).day
+                #expect(span == days - 1)
+                let gap = cal.dateComponents([.day], from: trend.previousEnd, to: date(today)).day
+                #expect(gap == days)
+            }
+        }
     }
 
     /// A day that recorded no work at all is worth zero, and zero is a figure —
     /// it must not make the span read as unknown.
     @Test func quietDaysAreZeroRatherThanMissing() {
-        let week = PeriodTotals.week(
+        let week = PeriodTotals.trailing(
+            days: 7,
             tokens: ["2026-09-14": 400, "2026-09-07": 100],
             active: ["2026-09-14", "2026-09-07"],
             today: date("2026-09-16")
@@ -100,7 +124,7 @@ struct PeriodTotalsTests {
         let tokens = ["2026-09-07": 100, "2026-09-14": 400]
         let active: Set<String> = ["2026-09-07", "2026-09-08", "2026-09-14"]
 
-        let week = PeriodTotals.week(tokens: tokens, active: active, today: date("2026-09-16"))
+        let week = PeriodTotals.trailing(days: 7, tokens: tokens, active: active, today: date("2026-09-16"))
         #expect(week.complete)
         #expect(!week.previousComplete)
         #expect(week.change == nil)
@@ -110,7 +134,8 @@ struct PeriodTotalsTests {
     }
 
     @Test func aGapInTheCurrentSpanBreaksItTheSameWay() {
-        let week = PeriodTotals.week(
+        let week = PeriodTotals.trailing(
+            days: 7,
             tokens: ["2026-09-07": 100, "2026-09-14": 400],
             active: ["2026-09-07", "2026-09-14", "2026-09-15"],
             today: date("2026-09-16")
@@ -121,7 +146,8 @@ struct PeriodTotalsTests {
 
     /// Nothing to divide by. A first week is not an infinite improvement.
     @Test func anEmptyBaselineHasNoChange() {
-        let week = PeriodTotals.week(
+        let week = PeriodTotals.trailing(
+            days: 7,
             tokens: ["2026-09-14": 400],
             active: ["2026-09-14"],
             today: date("2026-09-16")

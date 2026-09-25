@@ -4,7 +4,7 @@
 [![Swift 6](https://img.shields.io/badge/Swift-6-orange.svg)](https://swift.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%2015-blue.svg)](https://developer.apple.com)
 
-A macOS menu bar app that surfaces **Claude Code** usage at a glance — session and weekly rate limits, daily and lifetime token stats, per-model breakdown, and active sessions. Posts a system notification when any limit crosses 80% or 100%. Local data only, no credentials — its one network call is an hourly check for its own updates, which you can turn off.
+A macOS menu bar app that surfaces **Claude Code** usage at a glance — session and weekly rate limits, daily and lifetime token stats, per-model breakdown, and active sessions. Posts a system notification when any limit crosses 80% or 100%, and when a Claude Code session needs your input or finishes a long stretch of work. Local data only, no credentials — its one network call is an hourly check for its own updates, which you can turn off.
 
 <table>
   <tr>
@@ -23,12 +23,13 @@ A macOS menu bar app that surfaces **Claude Code** usage at a glance — session
 - **Header at a glance** — today's tokens, weekly-limit delta since midnight, current streak
 - **Stats** — tokens over the last 7 and last 30 days with a green/red arrow against the equally long span before each, current and longest streak, longest session duration, lifetime totals, full-width activity heatmap (about twenty weeks — as many as the popover fits) — hover a day for its tokens and messages
 - **Models** — per-model token share with input/output/cache breakdown and a favorite-model summary. Model names are derived from the id's shape, so a model released after this build still reads as "Opus 6" rather than as a raw id
-- **Status** — Claude Code version, session activity ("2 working, 1 waiting, 1 idle"), running session count, launch-at-login toggle, statusline installer
+- **Status** — Claude Code version, session activity ("2 working, 1 waiting, 1 idle"), running session count, launch-at-login and agent-notification toggles, statusline installer
 - **Threshold notifications** — fires at 80% and 100% of session and weekly limits, once per reset window
-- **Visual indicator in the menu bar** — sparkle glyph picks up a colored dot when any limit goes warning (yellow ≥ 80%) or critical (red = 100%)
+- **Agent notifications** — a session waiting on a permission prompt or a question, or finishing after a minute or more of work, posts a notification that clears itself once you've dealt with it
+- **Visual indicator in the menu bar** — an orange count of sessions waiting on you, and a colored dot when any limit goes warning (yellow ≥ 80%) or critical (red = 100%)
 - **No credentials** — reads only local files under `~/.claude/`, and writes only its own day-by-day record
 - **Updates itself** — checks this repo's releases hourly, installs a newer one and restarts, all without interrupting you
-- **Live file watching** — `DispatchSource` vnode events push updates the moment Claude Code writes data
+- **Live file watching** — `DispatchSource` vnode events and FSEvents push updates the moment Claude Code writes data
 
 ## Quota Status Thresholds
 
@@ -41,6 +42,26 @@ ClaudeBar uses two thresholds for both visual cues and notifications:
 | = 100% | Critical | Red              | "Session limit reached" |
 
 Each threshold fires **once per reset window** per limit (Session and Week). When the window resets, the notifications re-arm automatically. State is persisted in `UserDefaults` keyed by `(limit, resets_at)` so an app restart doesn't re-fire alerts you've already seen.
+
+## Agent notifications
+
+Claude Code records each session's state in `~/.claude/sessions/<pid>.json`: `busy`, `idle`, or `waiting` with the reason (`permission prompt`, `input needed`, …). ClaudeBar turns those into two kinds of notification:
+
+| Event | Fires when | Sound | Menu bar |
+|---|---|---|---|
+| Needs you | a session starts waiting on a prompt or question | Submarine | orange count until it's answered |
+| Finished | a session goes idle after at least a minute of work | Glass | — |
+
+Built to stay quiet when a lot happens at once:
+
+- **A state has to hold for 3 seconds** before it counts, so a prompt that resolves itself or a turn that picks up a queued message never notifies.
+- **Work is timed from your last prompt or answer.** Quick back-and-forth never pings, and neither does a turn that ends right after you approved something.
+- **One notification per session.** A newer one replaces the older, and it's removed as soon as the session moves on or exits, so Notification Center only shows what still needs you.
+- **At most one sound per 30 seconds.** The rest of a burst arrives silently; a prompt still rings right after a finish, since it blocks the session.
+- **Sound: when away (default), always, or never.** *When away* rings only after 30 seconds without keyboard or mouse input; someone at the Mac gets the banner. A prompt that lands just as you walk away rings once you've been gone 30 seconds.
+- **Nothing is announced at launch.** Sessions already waiting count in the menu bar but don't notify.
+
+A dialog you opened yourself (`/config` and the like) doesn't count as waiting on you. Turn agent notifications on or off, and pick the sound, in the **Status** tab.
 
 ## Requirements
 
@@ -123,7 +144,7 @@ ClaudeBar reads `~/.claude` — or `$CLAUDE_CONFIG_DIR`, if you point Claude Cod
 | `~/.claude/stats-cache.json` | Stats, Models | Lifetime totals, daily activity, per-model usage — up to the day it was last computed. |
 | `~/.claude/projects/**/*.jsonl` | Header, Stats, Models | Live scan of the session logs, covering every day the cache does not. This is what makes the numbers move. |
 | `~/.claude/rate-limits.json` | Usage | Written by the statusline relay (see above). |
-| `~/.claude/sessions/*.json` | Status | Running sessions: pid, version, and what each one is doing. |
+| `~/.claude/sessions/*.json` | Status, menu bar, agent notifications | Running sessions: pid, version, what each one is doing and, while it waits, why. Rewritten in place, so it is watched with FSEvents rather than a directory vnode source. |
 
 One file is ClaudeBar's own: `~/Library/Application Support/ClaudeBar/daily-activity.json`, a day-by-day record of what the scan has seen. See below for why it has to exist.
 
@@ -172,7 +193,7 @@ xcodebuild -project ClaudeBar.xcodeproj -scheme ClaudeBar -configuration Debug t
 
 - `ClaudeBar/ClaudeBarApp.swift` — app entry, `MenuBarExtra` wiring
 - `ClaudeBar/Views/` — popover, header, tab bar, four tab views, reusable components
-- `ClaudeBar/Services/` — file readers (`StatsCache`, `RateLimits`, `Sessions`), `ClaudeFileWatcher`, `StatuslineInstaller`, `LoginItem`, `ThresholdTracker`, `NotificationCoordinator`, `LiveStats`, `ModelNames`, `Updater`
+- `ClaudeBar/Services/` — file readers (`StatsCache`, `RateLimits`, `Sessions`), `ClaudeFileWatcher`, `StatuslineInstaller`, `LoginItem`, `ThresholdTracker`, `NotificationCoordinator`, `LiveStats`, `ModelNames`, `Updater`, `SessionActivityTracker`, `AgentSoundPolicy`, `AgentNotifier`
 - `ClaudeBar/DesignSystem/` — `Theme`, `ViewModifiers`
 
 ## License

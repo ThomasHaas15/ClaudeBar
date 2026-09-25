@@ -5,6 +5,7 @@ struct PopoverRoot: View {
     @Environment(StatsStore.self) private var stats
     @Environment(RateLimitsStore.self) private var rateLimits
     @Environment(SessionsStore.self) private var sessions
+    @Environment(AgentNotifier.self) private var agentNotifier
 
     @State private var tab: PopoverTab = .usage
 
@@ -28,6 +29,7 @@ struct PopoverRoot: View {
             sessions.reload()
             StatuslineInstaller.shared.refresh()
             LoginItem.shared.refresh()
+            agentNotifier.refreshAuthorization()
         }
     }
 

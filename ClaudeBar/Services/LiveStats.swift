@@ -336,10 +336,12 @@ actor LiveStatsScanner {
         if tally.firstDayUTC == nil { tally.firstDayUTC = stamp.utc }
         if tally.firstDayLocal == nil { tally.firstDayLocal = stamp.local }
 
-        // A sidechain entry is a subagent's turn copied into its parent's
-        // transcript; Claude Code drops those rather than count the same work
-        // twice.
-        if head.isSidechain { return }
+        // A sidechain entry in a session's own transcript is a subagent's turn
+        // copied into it, and Claude Code drops those rather than count the same
+        // work twice. A subagent's own transcript flags every entry it holds as
+        // a sidechain, so there the flag says nothing: those entries are the
+        // subagent's work, and dropping them loses all of it.
+        if head.isSidechain, !isSubagent { return }
 
         // Everything the cache already holds is counted for its tokens and for
         // nothing else: adding its messages or its models to the cache's own

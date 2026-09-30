@@ -188,6 +188,19 @@ struct StatsCacheTests {
         #expect(!padded.daysWithActivity.contains("2026-04-20"))
     }
 
+    /// A subagent still running past midnight puts tokens on a day with no
+    /// message on it. Those tokens are real, but a streak counts the days the
+    /// user worked, and nobody did on that one.
+    @Test func aDayWithOnlyASubagentsTokensIsNotAnActiveDay() {
+        var live = LiveStats()
+        live.days["2026-04-27"] = DayActivity(messages: 12, sessions: 1, tokens: 900)
+        live.days["2026-04-28"] = DayActivity(tokens: 4_000)
+
+        let merged = MergedStats(cache: nil, live: live)
+        #expect(merged.allActiveDates == ["2026-04-27"])
+        #expect(merged.tokens(forDay: "2026-04-28") == 4_000)
+    }
+
     @Test func hasDataFollowsEitherSource() throws {
         let cache = try JSONDecoder().decode(StatsCache.self, from: Data(cacheJSON().utf8))
         var live = LiveStats()

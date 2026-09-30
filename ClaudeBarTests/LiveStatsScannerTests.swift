@@ -33,8 +33,12 @@ struct LiveStatsScannerTests {
         """
     }
 
-    private func userLine(timestamp: String, text: String = "hello") -> String {
-        #"{"isSidechain":false,"message":{"role":"user","content":"\#(text)"},"type":"user","timestamp":"\#(timestamp)"}"#
+    private func userLine(
+        timestamp: String,
+        text: String = "hello",
+        isSidechain: Bool = false
+    ) -> String {
+        #"{"isSidechain":\#(isSidechain),"message":{"role":"user","content":"\#(text)"},"type":"user","timestamp":"\#(timestamp)"}"#
     }
 
     private func write(_ lines: [String], to url: URL) throws {
@@ -190,6 +194,11 @@ struct LiveStatsScannerTests {
     /// A subagent's tokens are the user's, but its transcript is not a session
     /// the user started and its turns are not messages in one — a fan-out of
     /// ten agents is not ten sessions.
+    ///
+    /// Claude Code flags every entry of a subagent's own transcript as a
+    /// sidechain, so the lines here are written that way: the flag that keeps
+    /// copied turns out of a parent transcript must not keep the subagent's
+    /// own work out too.
     @Test func countsSubagentTokensButNotSubagentSessions() async throws {
         let dir = try makeProjectsDir()
         try write(
@@ -197,14 +206,22 @@ struct LiveStatsScannerTests {
             to: dir.appendingPathComponent("project/a.jsonl")
         )
         try write(
-            [assistantLine(model: "opus", input: 20, output: 30, timestamp: "2026-08-10T12:05:00Z")],
+            [
+                userLine(timestamp: "2026-08-10T12:04:00Z", isSidechain: true),
+                assistantLine(
+                    model: "opus", input: 20, output: 30,
+                    timestamp: "2026-08-10T12:05:00Z", isSidechain: true
+                )
+            ],
             to: dir.appendingPathComponent("project/a/subagents/agent-1.jsonl")
         )
 
         let stats = await LiveStatsScanner(projectsDir: dir).scan(after: nil)
         #expect(stats.modelUsage["opus"] == TokenUsage(input: 21, output: 31))
+        #expect(stats.days[localDay("2026-08-10T12:05:00Z")]?.tokens == 52)
         #expect(stats.newSessions == 1)
         #expect(stats.newMessages == 1)
+        #expect(stats.days[localDay("2026-08-10T12:05:00Z")]?.messages == 1)
     }
 
     /// A sidechain entry is a subagent turn copied into the parent transcript;

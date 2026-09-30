@@ -203,8 +203,12 @@ struct MergedStats: Equatable {
         Set(dailyRecords.filter { !$0.value.isEmpty }.keys)
     }
 
+    /// Days the user was at it, for the streaks and the active-day count. Not
+    /// every day with a record: a subagent that runs on past midnight leaves
+    /// its tokens on a day nobody sent a message, and Claude Code's own streaks
+    /// do not count that day either.
     var allActiveDates: [String] {
-        dailyRecords.keys.sorted()
+        dailyRecords.filter { $0.value.messages > 0 || $0.value.sessions > 0 }.keys.sorted()
     }
 
     var modelTotals: [String: TokenUsage] {

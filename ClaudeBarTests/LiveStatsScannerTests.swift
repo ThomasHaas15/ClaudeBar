@@ -98,8 +98,9 @@ struct LiveStatsScannerTests {
         #expect(stats.days[day]?.messages == 3)
         #expect(stats.days[day]?.sessions == 1)
         #expect(stats.days[day]?.toolCalls == 2)
-        // Tokens are the billable columns only; cache reads are kept apart.
-        #expect(stats.days[day]?.tokens == 1050)
+        // Every column, cache reads and writes included, the way Claude Code
+        // totals them.
+        #expect(stats.days[day]?.tokens == 6_100)
     }
 
     /// The day counts are what the heatmap draws, so they have to land on the
@@ -148,8 +149,8 @@ struct LiveStatsScannerTests {
 
     /// Totals stop at the cutoff; the day-by-day record does not. The cache has
     /// figures of its own for the covered days, but they move only when someone
-    /// opens `/usage` and its token column counts cache reads besides, so the
-    /// app keeps its own account of every day it can still see.
+    /// opens `/usage` and are filed by UTC date, so the app keeps its own
+    /// account of every day it can still see.
     @Test func recordsEveryDayEvenOnesTheCacheCovers() async throws {
         let dir = try makeProjectsDir()
         try write(

@@ -156,23 +156,22 @@ So ClaudeBar treats it as history, not as a feed: the cache covers everything up
 
 Two consequences worth knowing:
 
-- **Tokens mean input + output.** Cache reads and writes are two orders of magnitude larger and would turn every figure into a measure of context size, so they are counted separately and shown per model in the Models tab.
-- **Claude Code prunes old transcripts** (`cleanupPeriodDays`, 30 days by default). Whatever the stats cache absorbed survives as lifetime totals; per-day figures survive only in ClaudeBar's own record (below).
+- **Tokens mean what Claude Code's own stats call Total tokens**: input + output + cache reads + cache writes, subagents included. Cache reads are nearly all of it — every message re-reads the conversation so far — so it runs hundreds of times above input + output. The Total tokens card shows input + output beneath the total and the full breakdown on hover, and the Models tab splits each model's share into its columns.
+- **Subagents count for their tokens, not their messages.** A subagent's transcript (`<session>/subagents/agent-*.jsonl`) is work the user asked for, but not a session they started, so — as in Claude Code's own stats — its tokens are added to the day and its turns are not counted as messages or sessions.
+- **Claude Code prunes old transcripts** (`cleanupPeriodDays`, 30 days by default). Whatever the stats cache absorbed survives as lifetime totals; per-day figures survive mostly in ClaudeBar's own record (below).
 
 ### Why ClaudeBar keeps a day-by-day record of its own
 
-The stats cache has a per-day token figure, `dailyModelTokens`, and ClaudeBar deliberately ignores it. It counts cache reads and writes alongside input and output:
+The stats cache has a per-day token figure of its own, `dailyModelTokens`, and it counts what ClaudeBar counts — at `dailyModelTokensVersion` 5 it matches a scan of the same transcripts to the token. It still cannot carry the per-day figures, for two reasons:
 
-| Day | `dailyModelTokens` | input + output |
-|---|---|---|
-| 2026-09-02 | 33,320,754 | 326,341 |
-| 2026-09-13 | 4,704,474 | 120,810 |
+- **Its days are UTC dates**, where everything ClaudeBar shows is a local day. Work past local midnight is filed under a different day in each, so the cache is a second count of mostly the same work rather than a fuller one: taking the larger of the two figures per day read the last seven days 7.6% high on the machine this was written on. Nor does a local day with no figure mark a gap on its own, because a UTC day runs into the local day to one side of it. So a day takes the cache's figure only when neither it nor the day either side has a figure of its own.
+- **It forgets.** Whenever Claude Code bumps `dailyModelTokensVersion` it rebuilds the column from the transcripts still on disk, which drops every day already pruned. An unfamiliar version is not read at all.
 
-Roughly a hundred times the number shown everywhere else in the app, so a day taken from the cache set beside a day taken from the live scan is not a comparison — it is a fake crash every time a window straddles the cache's last computed day.
+Claude Code throws the transcripts away after thirty days, while the heatmap reaches back some twenty weeks and the last-30-days comparison sixty days. ClaudeBar therefore writes down what it sees, in `daily-activity.json`, and a day stays readable long after its transcripts are gone.
 
-So per-day tokens come only from the transcripts. Which leaves the other problem: Claude Code throws those away after thirty days, while the heatmap reaches back some twenty weeks and the last-30-days comparison sixty days. ClaudeBar therefore writes down what it sees, in `daily-activity.json`, and a day stays readable long after its transcripts are gone.
+The live scan and ClaudeBar's record — and the cache, for messages and sessions — are partial views of the same days rather than slices of different ones, so they are merged by taking the largest figure for each field rather than by adding them up. A day's numbers only grow as more of it is recorded, so a day half pruned scans low and cannot overwrite what was seen while it was whole.
 
-The three sources — the live scan, ClaudeBar's record, and the cache — are partial views of the same days rather than slices of different ones, so they are merged by taking the largest figure for each field rather than by adding them up. A day's numbers only grow as more of it is recorded, so a day half pruned scans low and cannot overwrite what was seen while it was whole.
+The record's version 1 counted tokens as input + output, without subagents. Those figures are dropped when the file is read: a day still on disk is counted again by the next scan, and a day already pruned reads as not recorded unless the cache still has it.
 
 Until two periods have both been recorded, the card says so rather than guessing: a span containing a day that did work but has no figure left shows no arrow at all.
 

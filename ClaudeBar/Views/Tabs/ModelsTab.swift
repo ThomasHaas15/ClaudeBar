@@ -57,14 +57,14 @@ struct ModelsTab: View {
     }
 
     private func makeEntries(_ usage: [String: TokenUsage]) -> [Entry] {
-        let filtered = usage.filter { ModelNames.isUserFacing(id: $0.key) && $0.value.billable > 0 }
+        let filtered = usage.filter { ModelNames.isUserFacing(id: $0.key) && $0.value.total > 0 }
         // Share of the tokens the app counts everywhere else, so the rows add
         // up to the Stats tab's total rather than to a column of it.
-        let total = filtered.values.reduce(0) { $0 + $1.billable }
+        let total = filtered.values.reduce(0) { $0 + $1.total }
         let palette: [Color] = [.blue, .green, .orange, .gray, .purple, .pink, .yellow, .red]
-        let sorted = filtered.sorted { $0.value.billable > $1.value.billable }
+        let sorted = filtered.sorted { $0.value.total > $1.value.total }
         return sorted.enumerated().map { idx, kv in
-            let pct = total > 0 ? Double(kv.value.billable) / Double(total) * 100 : 0
+            let pct = total > 0 ? Double(kv.value.total) / Double(total) * 100 : 0
             return Entry(
                 id: kv.key,
                 displayName: ModelNames.display(for: kv.key),

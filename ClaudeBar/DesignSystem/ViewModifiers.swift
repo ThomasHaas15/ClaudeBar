@@ -29,11 +29,24 @@ enum TokenFormat {
         case 1_000..<1_000_000:               return String(format: "%.0fk", n / 1_000)
         case 1_000_000..<10_000_000:          return String(format: "%.1fM", n / 1_000_000)
         case 10_000_000..<1_000_000_000:      return String(format: "%.0fM", n / 1_000_000)
-        // Cache reads reach this range within weeks; "4980M" is not a number
-        // anyone reads at a glance.
-        case 1_000_000_000..<10_000_000_000:  return String(format: "%.1fB", n / 1_000_000_000)
+        // A busy day reaches this range on its own; "4980M" is not a number
+        // anyone reads at a glance. The decimal stays up to a hundred billion,
+        // where a lifetime total spends months: "50B" beside the "49.7b"
+        // Claude Code shows for the same total reads as a different figure.
+        case 1_000_000_000..<100_000_000_000: return String(format: "%.1fB", n / 1_000_000_000)
         default:                              return String(format: "%.0fB", n / 1_000_000_000)
         }
+    }
+
+    /// "Input 13M · Output 214M · Cache read 48.6B · Cache write 895M" — the
+    /// columns of a total, in the order Claude Code's stats list them.
+    static func breakdown(_ usage: TokenUsage) -> String {
+        [
+            "Input \(compact(usage.input))",
+            "Output \(compact(usage.output))",
+            "Cache read \(compact(usage.cacheRead))",
+            "Cache write \(compact(usage.cacheCreation))"
+        ].joined(separator: " · ")
     }
 }
 

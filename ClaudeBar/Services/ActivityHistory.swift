@@ -5,10 +5,10 @@ import Foundation
 /// Nothing else keeps one that lasts. Claude Code prunes transcripts after
 /// `cleanupPeriodDays` — thirty days by default — so a day's real figures live
 /// exactly as long as its logs do. Its stats cache is not the fallback it looks
-/// like: `dailyActivity` moves only when someone opens `/usage`, and
-/// `dailyModelTokens` counts cache reads and writes alongside input and output,
-/// which puts it two orders of magnitude above the number the rest of this app
-/// calls tokens.
+/// like: `dailyActivity` moves only when someone opens `/usage`,
+/// `dailyModelTokens` is rebuilt from whatever transcripts are left whenever
+/// Claude Code changes how it counts, and both file their days by UTC date
+/// where the app shows local ones.
 ///
 /// So the app writes down what it sees. That is what lets the heatmap reach
 /// back sixty days, and month-on-month reach back sixty more, without either
@@ -18,10 +18,13 @@ import Foundation
 final class ActivityHistory {
     static let shared = ActivityHistory(url: ActivityHistory.defaultURL)
 
-    /// Bumped if the shape ever changes. An unreadable file is treated as no
-    /// history rather than as an error, the way every other file this app reads
-    /// is.
-    private static let currentVersion = 1
+    /// Bumped if the shape, or what a field counts, ever changes. An unreadable
+    /// file is treated as no history rather than as an error, the way every
+    /// other file this app reads is.
+    ///
+    /// 1 counted tokens as input + output, and missed every subagent. 2 counts
+    /// them the way Claude Code does — see `TokenUsage.total`.
+    private static let currentVersion = 2
 
     /// Floor between writes. Today's figures move with every message, and a day
     /// still on disk is re-derived from scratch on every scan, so anything a
@@ -38,8 +41,8 @@ final class ActivityHistory {
             .appendingPathComponent("daily-activity.json")
     }
 
-    /// Keyed by `yyyy-MM-dd` local day. Tokens are the app's measure:
-    /// input + output.
+    /// Keyed by `yyyy-MM-dd` local day. Tokens are the app's measure,
+    /// `TokenUsage.total`.
     private(set) var days: [String: DayActivity]
 
     private let url: URL
@@ -96,6 +99,23 @@ final class ActivityHistory {
         guard let data = try? Data(contentsOf: url),
               let stored = try? JSONDecoder().decode(Stored.self, from: data)
         else { return [:] }
+        // A version 1 token figure is hundreds of times smaller than the same
+        // day counted now. On a day still on disk the next scan would replace
+        // it, but a day already pruned has nothing to replace it with, and
+        // would read as a collapse beside its neighbours. So every one is
+        // dropped: the scan counts again what it can still see, and a day it
+        // cannot reads as not recorded — which the stats cache can still fill.
+        // Nothing else has changed what it counts.
+        guard stored.version >= 2 else {
+            return stored.days.mapValues {
+                DayActivity(
+                    messages: $0.messages,
+                    sessions: $0.sessions,
+                    toolCalls: $0.toolCalls,
+                    tokens: nil
+                )
+            }
+        }
         return stored.days
     }
 

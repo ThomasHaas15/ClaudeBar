@@ -13,11 +13,14 @@ struct StatsCache: Decodable, Equatable {
     let version: Int
     let lastComputedDate: String?
     let dailyActivity: [DailyActivity]
-    /// Decoded to document the file, not to be believed: these totals count
-    /// cache reads and writes alongside input and output, which is two orders
-    /// of magnitude above what this app calls tokens. Per-day figures come from
-    /// `LiveStats.dayTokens` and `TokenHistory` instead — see `dailyTokens`.
+    /// Per-day tokens by model, in the app's own measure but by UTC date —
+    /// read through `dailyTokens`, and only where nothing else has a figure
+    /// (see `MergedStats.dailyTokens`).
     let dailyModelTokens: [DailyModelTokens]
+    /// The counting `dailyModelTokens` was made with. Claude Code rebuilds the
+    /// column from the transcripts still on disk whenever it bumps this, so a
+    /// version other than the one checked here may count something else.
+    let dailyModelTokensVersion: Int?
     let modelUsage: [String: ModelUsage]
     let totalSessions: Int
     let totalMessages: Int
@@ -59,6 +62,23 @@ struct StatsCache: Decodable, Equatable {
         let duration: Int
         let messageCount: Int
         let timestamp: String
+    }
+
+    /// The `dailyModelTokensVersion` checked against the scan: all four token
+    /// columns, subagents included, bucketed by UTC day. It matched a scan of
+    /// the same transcripts to the token.
+    static let checkedDailyModelTokensVersion = 5
+
+    /// `dailyModelTokens` per day, across models — or nothing when the column
+    /// is a version nobody has checked. Better a day with no figure than one
+    /// counted some other way.
+    var dailyTokens: [String: Int] {
+        guard dailyModelTokensVersion == Self.checkedDailyModelTokensVersion else { return [:] }
+        var byDate: [String: Int] = [:]
+        for day in dailyModelTokens {
+            byDate[day.date, default: 0] += day.tokensByModel.values.reduce(0, +)
+        }
+        return byDate
     }
 
     /// The last day the cache accounts for, inclusive — everything after it has
@@ -112,9 +132,10 @@ struct MergedStats: Equatable {
 
     var hasData: Bool { cache != nil || !live.days.isEmpty || !history.isEmpty }
 
-    var totalTokens: Int {
-        let cached = cache?.modelUsage.values.reduce(0) { $0 + $1.inputTokens + $1.outputTokens } ?? 0
-        return cached + live.modelUsage.values.reduce(0) { $0 + $1.billable }
+    /// Every model's columns added up, lifetime. Its `total` is the figure
+    /// Claude Code's own stats show as "Total tokens".
+    var totalUsage: TokenUsage {
+        modelTotals.values.reduce(TokenUsage(), +)
     }
 
     var totalSessions: Int {
@@ -168,25 +189,46 @@ struct MergedStats: Equatable {
             .sorted { $0.date < $1.date }
     }
 
-    /// Per-day token totals, in the app's measure: input + output, counted from
-    /// the transcripts. Two sources, both of them that measure — what the scan
-    /// can still see, over what ClaudeBar recorded while it could.
+    /// Per-day token totals, in the app's measure (`TokenUsage.total`): what
+    /// the scan can still see, over what ClaudeBar recorded while it could, and
+    /// the stats cache only where neither of those has anything nearby.
     ///
-    /// Kept apart from `dailyRecords` because the stats cache must not
-    /// contribute here at all. Its `dailyModelTokens` counts cache reads and
-    /// writes too, so a day taken from it beside a day taken from the scan is
-    /// not a comparison; better a day with no figure than one that reads a
-    /// hundred times too big.
+    /// Kept apart from `dailyRecords` because the cache cannot merge the way it
+    /// does there. Its days are UTC dates and these are local, so a night's
+    /// work past midnight is filed under a different day in each, and taking
+    /// the larger figure per day counts that work twice — enough to read a week
+    /// several percent high. Nor is a date missing here a gap the cache can
+    /// fill on its own: a UTC day runs into the local day to one side of it,
+    /// and a figure on that day may already hold some of the same hours. No
+    /// zone is offset by a whole day, so a UTC day never reaches past the
+    /// local days either side of its date; a cache day fills in only when
+    /// none of those three has a figure, and then none of its work is counted
+    /// anywhere else.
     ///
     /// Which means a day is *absent* rather than zero when no figure survives
-    /// for it — a day worked on before ClaudeBar was installed, or before it was
-    /// last run for long enough to matter. Callers showing a number per day have
-    /// to tell those apart: see `HeatmapGrid` and `PeriodTrend.complete`.
+    /// for it — a day pruned before ClaudeBar counted it this way, and dropped
+    /// from the cache when Claude Code last rebuilt the column. Callers showing
+    /// a number per day have to tell those apart: see `HeatmapGrid` and
+    /// `PeriodTrend.complete`.
     var dailyTokens: [String: Int] {
         var byDate: [String: Int] = [:]
-        for (date, recorded) in history { byDate[date] = recorded.tokens }
+        for (date, recorded) in history {
+            if let tokens = recorded.tokens { byDate[date] = tokens }
+        }
         for (date, scanned) in live.days {
-            byDate[date] = max(byDate[date] ?? 0, scanned.tokens)
+            if let tokens = scanned.tokens { byDate[date] = max(byDate[date] ?? 0, tokens) }
+        }
+
+        let counted = byDate
+        // Only for stepping between dates: UTC has no day that is not 24 hours.
+        let utc = DateFormatter()
+        utc.calendar = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0)
+        utc.dateFormat = "yyyy-MM-dd"
+        for (date, tokens) in cache?.dailyTokens ?? [:] {
+            guard let day = utc.date(from: date) else { continue }
+            let reach = [-1, 0, 1].map { utc.string(from: day.addingTimeInterval(TimeInterval($0) * 86_400)) }
+            if reach.allSatisfy({ counted[$0] == nil }) { byDate[date] = tokens }
         }
         return byDate
     }

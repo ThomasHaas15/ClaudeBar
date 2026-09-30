@@ -6,13 +6,13 @@ struct TokenUsage: Equatable, Sendable {
     var cacheRead: Int = 0
     var cacheCreation: Int = 0
 
-    /// What the app calls "tokens". Cache reads and writes are excluded
-    /// deliberately: they dwarf the rest by two orders of magnitude — a single
-    /// message re-reads the whole conversation — so including them would turn
-    /// every figure in the UI into a measure of context size rather than of
-    /// work done. The cache columns stay available for the Models tab, which
-    /// labels them.
-    var billable: Int { input + output }
+    /// What the app calls "tokens": all four columns, the sum Claude Code's own
+    /// stats show as "Total tokens", so that the two never disagree about how
+    /// much was used. Cache reads make up nearly all of it — every message
+    /// re-reads the conversation so far — which puts it hundreds of times
+    /// above input + output; the Total tokens card and the Models tab keep the
+    /// columns apart for anyone after that difference.
+    var total: Int { input + output + cacheRead + cacheCreation }
 
     static func + (lhs: Self, rhs: Self) -> Self {
         TokenUsage(
@@ -30,34 +30,49 @@ struct DayActivity: Equatable, Sendable, Codable {
     var messages: Int = 0
     var sessions: Int = 0
     var toolCalls: Int = 0
-    var tokens: Int = 0
+    /// `TokenUsage.total` over the day. Nil when no figure in that measure
+    /// survives: a day ClaudeBar recorded before it counted tokens this way,
+    /// whose transcripts are gone since — see `ActivityHistory`. Zero is a
+    /// figure: the day was looked at and nothing was spent.
+    var tokens: Int? = 0
 
-    var isEmpty: Bool { messages == 0 && sessions == 0 && toolCalls == 0 && tokens == 0 }
+    var isEmpty: Bool { messages == 0 && sessions == 0 && toolCalls == 0 && (tokens ?? 0) == 0 }
 
+    /// A sum with a part missing is missing, not short.
     static func + (lhs: Self, rhs: Self) -> Self {
         DayActivity(
             messages: lhs.messages + rhs.messages,
             sessions: lhs.sessions + rhs.sessions,
             toolCalls: lhs.toolCalls + rhs.toolCalls,
-            tokens: lhs.tokens + rhs.tokens
+            tokens: lhs.tokens.flatMap { known in rhs.tokens.map { known + $0 } }
         )
     }
 
     /// Field by field, the larger of the two. What a merge of two partial
-    /// observations of the same day wants — see `ActivityHistory`.
+    /// observations of the same day wants — see `ActivityHistory`. Any token
+    /// figure beats none.
     static func max(_ lhs: Self, rhs: Self) -> Self {
         DayActivity(
             messages: Swift.max(lhs.messages, rhs.messages),
             sessions: Swift.max(lhs.sessions, rhs.sessions),
             toolCalls: Swift.max(lhs.toolCalls, rhs.toolCalls),
-            tokens: Swift.max(lhs.tokens, rhs.tokens)
+            tokens: [lhs.tokens, rhs.tokens].compactMap { $0 }.max()
         )
+    }
+
+    mutating func add(tokens count: Int) {
+        tokens = (tokens ?? 0) + count
     }
 
     /// Hand-rolled so that a record written by an older build, or one that
     /// gains a field later, still reads rather than throwing the whole file
-    /// away.
-    init(messages: Int = 0, sessions: Int = 0, toolCalls: Int = 0, tokens: Int = 0) {
+    /// away. A record without a token figure reads as having none.
+    init(
+        messages: Int = 0,
+        sessions: Int = 0,
+        toolCalls: Int = 0,
+        tokens: Int? = 0
+    ) {
         self.messages = messages
         self.sessions = sessions
         self.toolCalls = toolCalls
@@ -69,7 +84,7 @@ struct DayActivity: Equatable, Sendable, Codable {
         messages = try c.decodeIfPresent(Int.self, forKey: .messages) ?? 0
         sessions = try c.decodeIfPresent(Int.self, forKey: .sessions) ?? 0
         toolCalls = try c.decodeIfPresent(Int.self, forKey: .toolCalls) ?? 0
-        tokens = try c.decodeIfPresent(Int.self, forKey: .tokens) ?? 0
+        tokens = try c.decodeIfPresent(Int.self, forKey: .tokens)
     }
 }
 
@@ -78,8 +93,8 @@ struct LiveStats: Equatable, Sendable {
     /// cache covers it too.
     ///
     /// Deliberately not bounded by the cache's watermark. The cache is a
-    /// lifetime ledger that moves only when someone opens `/usage`, and its
-    /// per-day token figure counts cache reads and writes besides — so the app
+    /// lifetime ledger that moves only when someone opens `/usage`, and it
+    /// files its days by UTC date where the app shows local ones — so the app
     /// keeps its own day-by-day record and the cache only fills the gaps. What
     /// *is* bounded by the watermark is below, because those are the numbers
     /// added to the cache's own totals.
@@ -101,9 +116,9 @@ struct LiveStats: Equatable, Sendable {
 ///
 /// It reads the logs for two different spans at once. Totals — messages,
 /// sessions, per-model tokens — cover only what the on-disk stats cache does
-/// not, because they are added to it. Per-day *tokens* cover every log still on
-/// disk, cache or no cache, because the cache's own per-day figure counts
-/// something else entirely (see `LiveStats.dayTokens`).
+/// not, because they are added to it. The day-by-day record covers every log
+/// still on disk, cache or no cache, because the cache's own days are UTC
+/// dates that move only when someone opens `/usage` (see `LiveStats.days`).
 ///
 /// The cache's span is usually months, not minutes. `~/.claude/stats-cache.json`
 /// is recomputed only when someone opens `/usage` in Claude Code — it is that
@@ -376,7 +391,7 @@ actor LiveStatsScanner {
                 cacheCreation: (usage["cache_creation_input_tokens"] as? Int) ?? 0
             )
             if !covered { tally.modelUsage[model] = (tally.modelUsage[model] ?? TokenUsage()) + counted }
-            tally.days[stamp.local, default: DayActivity()].tokens += counted.billable
+            tally.days[stamp.local, default: DayActivity()].add(tokens: counted.total)
         }
     }
 

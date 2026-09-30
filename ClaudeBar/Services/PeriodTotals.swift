@@ -19,7 +19,7 @@ struct PeriodTrend: Equatable {
     let previousEnd: Date
     /// False when a day in the window recorded activity but no token figure:
     /// its transcripts were pruned before ClaudeBar ever saw them, and the
-    /// stats cache counts a different number. The total is then short by an
+    /// stats cache has no figure for it either. The total is then short by an
     /// unknown amount, which is not the same as being small — see
     /// `ActivityHistory`.
     let complete: Bool

@@ -28,9 +28,8 @@ struct ModelRow: View {
         }
     }
 
-    /// Cache reads and writes sit alongside the billable columns rather than in
-    /// them: they run two orders of magnitude larger, so folding them in would
-    /// leave every row reading as its context size.
+    /// What the share is made of, input and output first: the cache columns are
+    /// nearly all of it, and listed first they would bury what the model wrote.
     private var breakdown: String {
         var parts = [
             "In: \(TokenFormat.compact(usage.input))",

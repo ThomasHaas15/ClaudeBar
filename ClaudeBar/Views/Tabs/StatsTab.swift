@@ -30,7 +30,7 @@ struct StatsTab: View {
     @ViewBuilder
     private func cards(_ merged: MergedStats, dailyTokens: [String: Int]) -> some View {
         let totalSessions = merged.totalSessions
-        let totalTokens = merged.totalTokens
+        let totalUsage = merged.totalUsage
         let dates = merged.allActiveDates
         let currentStreak = StreakCalculator.current(from: dates, today: stats.today)
         let longestStreak = StreakCalculator.longest(from: dates)
@@ -74,9 +74,10 @@ struct StatsTab: View {
                 )
                 StatCard(
                     title: "Total tokens",
-                    value: TokenFormat.compact(totalTokens),
-                    subtitle: "Input + output"
+                    value: TokenFormat.compact(totalUsage.total),
+                    subtitle: "\(TokenFormat.compact(totalUsage.input + totalUsage.output)) input + output"
                 )
+                .help(TokenFormat.breakdown(totalUsage))
             }
             .fixedSize(horizontal: false, vertical: true)
         }

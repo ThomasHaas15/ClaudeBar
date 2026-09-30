@@ -47,10 +47,12 @@ struct StatsCacheTests {
         #expect(cache.coveredThrough == "2026-04-25")
 
         let merged = MergedStats(cache: cache, live: LiveStats())
-        #expect(merged.totalTokens == 1000) // input + output, cache columns excluded
+        // Every column, the way Claude Code's "Total tokens" adds them up.
+        #expect(merged.totalUsage == TokenUsage(input: 100, output: 900, cacheRead: 40_000, cacheCreation: 2_000))
+        #expect(merged.totalUsage.total == 43_000)
         #expect(merged.modelTotals["claude-opus-5"]?.cacheRead == 40000)
-        // The cache's own per-day figure is a different number and is not read.
-        #expect(merged.tokens(forDay: "2026-04-25") == 0)
+        // Nothing else has a figure for the day, so the cache's own fills it.
+        #expect(merged.tokens(forDay: "2026-04-25") == 1_500)
     }
 
     /// The scanner compares the watermark as a string, so anything that is not
@@ -74,7 +76,7 @@ struct StatsCacheTests {
         live.modelUsage["claude-opus-5"] = TokenUsage(input: 1000, output: 4000, cacheRead: 9)
 
         let merged = MergedStats(cache: nil, live: live)
-        #expect(merged.totalTokens == 5000)
+        #expect(merged.totalUsage.total == 5_009)
         #expect(merged.totalSessions == 2)
         #expect(merged.totalMessages == 8)
         #expect(merged.todayTokens == merged.tokens(forDay: StatsCache.todayString()))
@@ -134,23 +136,97 @@ struct StatsCacheTests {
 
     /// What the heatmap reads on hover, and what a period total is summed from.
     /// A day nothing survives for has to stay *absent* rather than come back as
-    /// zero — and the stats cache cannot fill the gap, because its per-day
-    /// figure counts cache reads and writes and so is a different number
-    /// entirely.
-    @Test func dailyTokensLeaveOutDaysNothingRecorded() throws {
-        let cache = try JSONDecoder().decode(StatsCache.self, from: Data(cacheJSON().utf8))
+    /// zero.
+    @Test func dailyTokensLeaveOutDaysNothingRecorded() {
         var live = LiveStats()
         live.days["2026-04-27"] = DayActivity(messages: 12, tokens: 7_000)
         live.days["2026-04-28"] = DayActivity(messages: 4, tokens: 0)
 
-        let tokens = MergedStats(cache: cache, live: live).dailyTokens
+        let tokens = MergedStats(
+            cache: nil,
+            live: live,
+            // Recorded before tokens were counted this way, and pruned since.
+            history: ["2026-03-01": DayActivity(messages: 30, tokens: nil)]
+        ).dailyTokens
         #expect(tokens["2026-04-27"] == 7_000)
         // Scanned and genuinely empty — that *is* a figure, and zero is it.
         #expect(tokens["2026-04-28"] == 0)
-        // Worked on, but the cache's figure for it is not this measure.
-        #expect(cache.dailyActivity.contains { $0.date == "2026-04-25" })
-        #expect(cache.dailyModelTokens.contains { $0.date == "2026-04-25" })
-        #expect(tokens["2026-04-25"] == nil)
+        // Worked on, but no figure in this measure is left anywhere.
+        #expect(tokens["2026-03-01"] == nil)
+    }
+
+    /// The cache counts tokens the way the scan does, but files them by UTC
+    /// date. Beside a local day it is a second count of mostly the same work,
+    /// not a fuller one, so a day the scan or the record has keeps that figure
+    /// whichever is larger — the cache only fills the days nothing else has.
+    @Test func theCacheFillsOnlyTheDaysNothingElseHas() throws {
+        let cache = try JSONDecoder().decode(StatsCache.self, from: Data(cacheJSON().utf8))
+        // It holds 1,500 tokens for 2026-04-25.
+        #expect(MergedStats(cache: cache, live: LiveStats()).tokens(forDay: "2026-04-25") == 1_500)
+
+        var live = LiveStats()
+        live.days["2026-04-25"] = DayActivity(messages: 3, tokens: 900)
+        #expect(MergedStats(cache: cache, live: live).tokens(forDay: "2026-04-25") == 900)
+
+        let recorded = MergedStats(
+            cache: cache,
+            live: LiveStats(),
+            history: ["2026-04-25": DayActivity(messages: 3, tokens: 1_200)]
+        )
+        #expect(recorded.tokens(forDay: "2026-04-25") == 1_200)
+
+        let recordedWithoutAFigure = MergedStats(
+            cache: cache,
+            live: LiveStats(),
+            history: ["2026-04-25": DayActivity(messages: 3, tokens: nil)]
+        )
+        #expect(recordedWithoutAFigure.tokens(forDay: "2026-04-25") == 1_500)
+    }
+
+    /// A date missing from the local figures is not yet a gap: a UTC day runs
+    /// into the local day on one side of it. Eight hours west of UTC, 20:00 on
+    /// the 21st is the 22nd in UTC, so filling an empty local 22nd from the
+    /// cache would count that evening a second time — and east of UTC the same
+    /// happens to the hours after midnight. The cache stays out of any day
+    /// next to one with a figure of its own.
+    @Test func theCacheStaysOutOfDaysBesideOnesWithAFigure() throws {
+        let json = cacheJSON().replacingOccurrences(
+            of: #"{"date":"2026-04-25","tokensByModel":{"claude-opus-5": 1000, "claude-haiku-4-5": 500}}"#,
+            with: """
+            {"date":"2026-04-20","tokensByModel":{"claude-opus-5": 200}},
+            {"date":"2026-04-22","tokensByModel":{"claude-opus-5": 300}},
+            {"date":"2026-04-25","tokensByModel":{"claude-opus-5": 1000, "claude-haiku-4-5": 500}}
+            """
+        )
+        let cache = try JSONDecoder().decode(StatsCache.self, from: Data(json.utf8))
+        var live = LiveStats()
+        live.days["2026-04-21"] = DayActivity(messages: 5, tokens: 700)
+
+        let tokens = MergedStats(cache: cache, live: live).dailyTokens
+        #expect(tokens["2026-04-21"] == 700)
+        #expect(tokens["2026-04-20"] == nil)
+        #expect(tokens["2026-04-22"] == nil)
+        // Nothing on either side, so none of its work is counted anywhere else.
+        #expect(tokens["2026-04-25"] == 1_500)
+    }
+
+    /// Claude Code rebuilds the column whenever it changes how it counts it, so
+    /// a version nobody has checked may be counting something else — and a
+    /// figure on the wrong scale is worse than none.
+    @Test func ignoresPerDayTokensOfAnUncheckedVersion() throws {
+        let checked = #""dailyModelTokensVersion": 5,"#
+        let unchecked = [
+            #""dailyModelTokensVersion": 4,"#,
+            #""dailyModelTokensVersion": 6,"#,
+            #""dailyModelTokensVersion": null,"#,
+            "" // A cache from before the field existed
+        ]
+        for replacement in unchecked {
+            let json = cacheJSON().replacingOccurrences(of: checked, with: replacement)
+            let cache = try JSONDecoder().decode(StatsCache.self, from: Data(json.utf8))
+            #expect(cache.dailyTokens.isEmpty)
+            #expect(MergedStats(cache: cache, live: LiveStats()).dailyTokens["2026-04-25"] == nil)
+        }
     }
 
     /// Once transcripts are pruned the scan sees nothing, so what ClaudeBar
@@ -186,6 +262,19 @@ struct StatsCacheTests {
         // A recorded-but-empty day is not activity.
         let padded = MergedStats(cache: cache, live: live, history: ["2026-04-20": DayActivity()])
         #expect(!padded.daysWithActivity.contains("2026-04-20"))
+    }
+
+    /// A subagent still running past midnight puts tokens on a day with no
+    /// message on it. Those tokens are real, but a streak counts the days the
+    /// user worked, and nobody did on that one.
+    @Test func aDayWithOnlyASubagentsTokensIsNotAnActiveDay() {
+        var live = LiveStats()
+        live.days["2026-04-27"] = DayActivity(messages: 12, sessions: 1, tokens: 900)
+        live.days["2026-04-28"] = DayActivity(tokens: 4_000)
+
+        let merged = MergedStats(cache: nil, live: live)
+        #expect(merged.allActiveDates == ["2026-04-27"])
+        #expect(merged.tokens(forDay: "2026-04-28") == 4_000)
     }
 
     @Test func hasDataFollowsEitherSource() throws {

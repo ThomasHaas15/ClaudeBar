@@ -20,7 +20,7 @@ struct ActivityHistoryTests {
                 messages: $0["messages"] ?? 0,
                 sessions: $0["sessions"] ?? 0,
                 toolCalls: $0["toolCalls"] ?? 0,
-                tokens: $0["tokens"] ?? 0
+                tokens: $0["tokens"]
             )
         }
     }
@@ -87,16 +87,44 @@ struct ActivityHistoryTests {
     }
 
     /// A record written before a field existed still has to read, or one added
-    /// field throws away every day ever recorded.
+    /// field throws away every day ever recorded. A day with no token figure
+    /// reads as having none, not as having spent nothing.
     @Test func aRecordMissingFieldsStillReads() throws {
         let url = makeURL()
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data(#"{"version":1,"days":{"2026-09-14":{"tokens":4200}}}"#.utf8).write(to: url)
+        try Data(#"{"version":2,"days":{"2026-09-13":{"messages":7},"2026-09-14":{"tokens":4200}}}"#.utf8)
+            .write(to: url)
 
-        #expect(ActivityHistory(url: url).days["2026-09-14"] == DayActivity(tokens: 4_200))
+        let history = ActivityHistory(url: url)
+        #expect(history.days["2026-09-13"] == DayActivity(messages: 7, tokens: nil))
+        #expect(history.days["2026-09-14"] == DayActivity(tokens: 4_200))
+    }
+
+    /// Version 1 counted tokens as input + output alone, and missed subagents.
+    /// Beside a day counted the way Claude Code does, one of its figures reads
+    /// as a collapse, so the figure goes. What the day's messages and sessions
+    /// were has not changed meaning, and stays.
+    @Test func aVersionOneRecordKeepsItsDaysButNotItsTokens() throws {
+        let url = makeURL()
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(
+            #"{"version":1,"days":{"2026-09-14":{"messages":40,"sessions":2,"toolCalls":9,"tokens":4200}}}"#.utf8
+        ).write(to: url)
+
+        let history = ActivityHistory(url: url)
+        #expect(history.days["2026-09-14"] == DayActivity(messages: 40, sessions: 2, toolCalls: 9, tokens: nil))
+
+        // A day still on disk gets its figure back from the next scan, and the
+        // file is written in the new measure, so the figure is not dropped again
+        // the next time it is read.
+        history.record(["2026-09-14": DayActivity(messages: 40, sessions: 2, toolCalls: 9, tokens: 900_000)])
+        #expect(ActivityHistory(url: url).days["2026-09-14"]?.tokens == 900_000)
     }
 
     /// The same way every other file this app reads behaves: unreadable is no

@@ -47,6 +47,12 @@ enum DurationFormat {
         return "\(hours)h \(minutes)m"
     }
 
+    /// "1m", "42m", "1h 5m", rounded to the nearest minute and never below 1m.
+    static func hm(_ interval: TimeInterval) -> String {
+        let minutes = max(1, Int((interval / 60).rounded()))
+        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+    }
+
     static func resetClock(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "h:mma"

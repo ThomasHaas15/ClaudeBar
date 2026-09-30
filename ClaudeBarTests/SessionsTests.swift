@@ -18,6 +18,14 @@ struct SessionsTests {
         return try JSONDecoder().decode(ClaudeSession.self, from: Data(json.utf8))
     }
 
+    private func session(cwd: String?, name: String? = nil, nameSource: String? = nil) throws -> ClaudeSession {
+        var fields = [#""pid":1"#, #""sessionId":"s-1""#]
+        if let cwd { fields.append("\"cwd\":\"\(cwd)\"") }
+        if let name { fields.append("\"name\":\"\(name)\"") }
+        if let nameSource { fields.append("\"nameSource\":\"\(nameSource)\"") }
+        return try JSONDecoder().decode(ClaudeSession.self, from: Data("{\(fields.joined(separator: ","))}".utf8))
+    }
+
     /// Claude Code writes four states where it once wrote two. A session
     /// shelling out to a build is working, not idle.
     @Test func readsEveryStatusClaudeCodeWrites() throws {
@@ -62,6 +70,47 @@ struct SessionsTests {
         )
         #expect(
             try SessionSummary.text(for: [session(pid: 1, status: "idle"), session(pid: 2, status: "idle")]) == "2 idle"
+        )
+    }
+
+    /// While a session waits, Claude Code says on what: a permission prompt,
+    /// a question, a dialog someone opened.
+    @Test func readsWhatAWaitingSessionIsWaitingFor() throws {
+        let json = """
+        {"pid":53903,"sessionId":"9e087588","cwd":"/Users/me/Projects/RP3-App","kind":"interactive",
+         "status":"waiting","waitingFor":"permission prompt","statusUpdatedAt":1790336128826,
+         "name":"rp3-app-4f","nameSource":"derived"}
+        """
+        let waiting = try JSONDecoder().decode(ClaudeSession.self, from: Data(json.utf8))
+        #expect(waiting.activity == .waiting)
+        #expect(waiting.waitingFor == "permission prompt")
+        #expect(waiting.statusDate == Date(timeIntervalSince1970: 1_790_336_128.826))
+    }
+
+    @Test func namesTheProjectAfterItsFolder() throws {
+        #expect(try session(cwd: "/Users/me/Projects/ClaudeBar").projectName == "ClaudeBar")
+    }
+
+    @Test func fallsBackToClaudeCodeWithoutAFolder() throws {
+        #expect(try session(cwd: nil).projectName == "Claude Code")
+    }
+
+    @Test func namesAWorktreeAfterItsRepositoryAndBranch() throws {
+        let worktree = try session(cwd: "/Users/me/Projects/RP3-App/.claude/worktrees/phone-graph-axis-labels")
+        #expect(worktree.projectName == "RP3-App › phone-graph-axis-labels")
+    }
+
+    /// Claude Code names a session after its folder plus a random suffix,
+    /// which says nothing the project name doesn't.
+    @Test func dropsTheNameClaudeCodeDerivesFromTheFolder() throws {
+        #expect(try session(cwd: "/tmp", name: "claudebar-4e", nameSource: "derived").descriptiveName == nil)
+    }
+
+    @Test func keepsANameSomeoneOrTheTaskChose() throws {
+        #expect(try session(cwd: "/tmp", name: "Fix axis labels", nameSource: "user").descriptiveName == "Fix axis labels")
+        #expect(
+            try session(cwd: "/tmp", name: "GetPremiumViewController SwiftUI conversion", nameSource: "auto").descriptiveName
+                == "GetPremiumViewController SwiftUI conversion"
         )
     }
 }

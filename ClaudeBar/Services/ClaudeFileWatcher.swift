@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import Foundation
 
 @MainActor
@@ -13,6 +14,8 @@ final class ClaudeFileWatcher {
     private static let pollInterval: TimeInterval = 30
 
     private var sources: [DispatchSourceFileSystemObject] = []
+    private var streams: [FSEventStreamRef] = []
+    private var streamTargets: [StreamTarget] = []
     private var pollTimer: DispatchSourceTimer?
     private var boundaryTimer: DispatchSourceTimer?
     private var boundaryDeadline: Date?
@@ -25,7 +28,7 @@ final class ClaudeFileWatcher {
         guard sources.isEmpty else { return }
         watchPath(ClaudePaths.statsCache, name: ClaudeFileWatcher.statsChanged)
         watchPath(ClaudePaths.rateLimits, name: ClaudeFileWatcher.rateLimitsChanged)
-        watchDirectory(ClaudePaths.sessionsDir, name: ClaudeFileWatcher.sessionsChanged)
+        watchDirectoryContents(ClaudePaths.sessionsDir, name: ClaudeFileWatcher.sessionsChanged)
 
         let timer = DispatchSource.makeTimerSource(queue: .main)
         // Wall-clock, not mach time: a mach deadline stops advancing while the
@@ -160,24 +163,51 @@ final class ClaudeFileWatcher {
         sources.append(src)
     }
 
-    private func watchDirectory(_ url: URL, name: Notification.Name) {
+    /// Claude Code rewrites a session file in place rather than replacing it,
+    /// which leaves the directory itself untouched, so a vnode source on the
+    /// directory only ever hears sessions start and end. FSEvents reports
+    /// writes to the files inside it as well.
+    private func watchDirectoryContents(_ url: URL, name: Notification.Name) {
         let fm = FileManager.default
         if !fm.fileExists(atPath: url.path) {
             try? fm.createDirectory(at: url, withIntermediateDirectories: true)
         }
-        let fd = open(url.path, O_EVTONLY)
-        guard fd != -1 else { return }
-        let src = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd,
-            eventMask: [.write, .extend, .delete, .rename],
-            queue: .main
+        let target = StreamTarget(name: name)
+        var context = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(target).toOpaque(),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
         )
-        src.setEventHandler {
-            NotificationCenter.default.post(name: name, object: nil)
+        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+            guard let info else { return }
+            let target = Unmanaged<StreamTarget>.fromOpaque(info).takeUnretainedValue()
+            NotificationCenter.default.post(name: target.name, object: nil)
         }
-        src.setCancelHandler { close(fd) }
-        src.resume()
-        sources.append(src)
+        guard let stream = FSEventStreamCreate(
+            kCFAllocatorDefault,
+            callback,
+            &context,
+            [url.path] as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            0.25, // Delivers once the write that raised it has finished, so the read sees the whole file
+            FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
+        ) else { return }
+        FSEventStreamSetDispatchQueue(stream, .main)
+        FSEventStreamStart(stream)
+        streams.append(stream)
+        streamTargets.append(target)
+    }
+
+    /// What an FSEvents callback posts. The stream holds it unretained, so the
+    /// watcher keeps it alive for as long as the stream runs.
+    private final class StreamTarget {
+        let name: Notification.Name
+
+        init(name: Notification.Name) {
+            self.name = name
+        }
     }
 
     private func ensureExists(_ url: URL) {

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct StatusTab: View {
     @Environment(SessionsStore.self) private var sessions
+    @Environment(AgentNotifier.self) private var agentNotifier
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.sectionSpacing) {
@@ -9,6 +10,8 @@ struct StatusTab: View {
             row("Status", value: sessions.activitySummary)
             row("Active sessions", value: "\(sessions.activeCount)")
             launchAtLoginRow
+            agentNotificationsRow
+            agentSoundRow
             Divider().padding(.top, 4)
             statuslineRow
             Divider().padding(.top, 4)
@@ -57,6 +60,55 @@ struct StatusTab: View {
         }
     }
 
+    @ViewBuilder
+    private var agentNotificationsRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Agent notifications").foregroundStyle(.secondary)
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { agentNotifier.isEnabled },
+                    set: { agentNotifier.setEnabled($0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+            }
+            .font(.body)
+
+            if agentNotifier.isEnabled && agentNotifier.isBlockedBySystem {
+                HStack(spacing: 6) {
+                    Text("Notifications are off for ClaudeBar in System Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Open") { agentNotifier.openNotificationSettings() }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private var agentSoundRow: some View {
+        HStack {
+            Text("Sound").foregroundStyle(.secondary)
+            Spacer()
+            Picker("", selection: Binding(
+                get: { agentNotifier.soundMode },
+                set: { agentNotifier.setSoundMode($0) }
+            )) {
+                ForEach(AgentSoundMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .fixedSize()
+        }
+        .font(.body)
+        .disabled(!agentNotifier.isEnabled)
+    }
 
     @ViewBuilder
     private var statuslineRow: some View {
